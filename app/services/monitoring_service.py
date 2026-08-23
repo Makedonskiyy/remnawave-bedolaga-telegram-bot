@@ -1977,14 +1977,14 @@ class MonitoringService:
             if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
                 tariff_label = f' «{subscription.tariff.name}»'
             message = f"""
-🎁 <b>Тестовая подписка{tariff_label} скоро закончится!</b>
+<tg-emoji emoji_id="5213452215527677338">⏳</tg-emoji> <b>Тестовый период{tariff_label} подходит к концу!</b>
 
-Ваша тестовая подписка истекает через 2 часа.
+Ваш пробный доступ истекает уже через 2 часа.
 
-💎 <b>Не хотите остаться без VPN?</b>
-Переходите на полную подписку!
+<tg-emoji emoji_id="5449863961577040778">💎</tg-emoji> <b>Понравилась скорость и стабильность?</b>
+Переходите на полный тариф, чтобы не терять защиту!
 
-⚡️ Успейте оформить до окончания тестового периода!
+<tg-emoji emoji_id="5447290623331705359">⚡️</tg-emoji> Оформите прямо сейчас и сохраните непрерывный доступ!
 """
 
             from aiogram.types import InlineKeyboardMarkup
