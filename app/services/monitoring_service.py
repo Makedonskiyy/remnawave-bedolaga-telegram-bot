@@ -394,6 +394,7 @@ class MonitoringService:
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
                 await self._check_unactivated_trial_users(db)
+                await self._check_friday_weekend_promo(db)
                 await self._check_trial_channel_subscriptions(db)
                 await self._check_expired_subscription_followups(db)
                 await self._check_traffic_warnings(db)
@@ -993,6 +994,104 @@ class MonitoringService:
                         await self._handle_unreachable_user(user, exc, 'напоминание о неактивированном триале 24ч')
                     except Exception as err:
                         logger.warning('Не удалось отправить 24h напоминание о триале', error=str(err))
+
+    async def _check_friday_weekend_promo(self, db: AsyncSession):
+        """Send Friday evening weekend discount (25%) to users without an active subscription."""
+        if not NotificationSettingsService.are_notifications_globally_enabled():
+            return
+
+        now = datetime.now(UTC)
+        # Check if today is Friday (weekday 4) between 14:00 and 20:00 UTC (17:00 - 23:00 MSK)
+        if now.weekday() != 4 or not (14 <= now.hour <= 20):
+            return
+
+        friday_id = now.strftime('%Y-W%W-Fri')
+        try:
+            from aiogram.types import InlineKeyboardMarkup
+            from app.keyboards.inline import build_miniapp_or_callback_button
+
+            # Query active users who joined at least 1 day ago
+            result = await db.execute(
+                select(User)
+                .options(selectinload(User.subscriptions))
+                .where(
+                    and_(
+                        User.status == UserStatus.ACTIVE.value,
+                        User.created_at <= now - timedelta(days=1),
+                    )
+                )
+            )
+            users = result.scalars().all()
+
+            for user in users:
+                if not user.telegram_id:
+                    continue
+
+                # Exclude users who currently have any ACTIVE subscription
+                has_active = any(
+                    sub.status == SubscriptionStatus.ACTIVE.value and (sub.end_date is None or sub.end_date > now)
+                    for sub in (user.subscriptions or [])
+                )
+                if has_active:
+                    continue
+
+                settings_data = dict(getattr(user, 'notification_settings', None) or {})
+                if settings_data.get('last_friday_promo') == friday_id:
+                    continue
+
+                # Create 25% discount offer valid for 60 hours
+                sub_id = user.subscriptions[0].id if user.subscriptions else None
+                offer = await upsert_discount_offer(
+                    db,
+                    user_id=user.id,
+                    subscription_id=sub_id,
+                    notification_type='friday_weekend_promo',
+                    discount_percent=25,
+                    bonus_amount_kopeks=0,
+                    valid_hours=60,
+                    effect_type='percent_discount',
+                )
+
+                texts = get_texts(user.language)
+                text = texts.get(
+                    'FRIDAY_WEEKEND_PROMO',
+                    '🍿 <b>Планы на уютный вечер?</b>\n\n'
+                    'Чтобы любимые фильмы и YouTube не зависали на самом интересном месте, заберите быстрый безлимитный доступ на выходные со скидкой 25%!\n\n'
+                    'Подключается на телефон, ПК и даже на телевизор.'
+                )
+
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            build_miniapp_or_callback_button(
+                                text='🍿 Забрать скидку 25%',
+                                callback_data=f'claim_discount_{offer.id}' if offer else 'menu_buy',
+                            )
+                        ],
+                        [
+                            build_miniapp_or_callback_button(
+                                text='💎 Оформить подписку',
+                                callback_data='menu_buy',
+                            )
+                        ],
+                    ]
+                )
+
+                try:
+                    await self._send_message_with_logo(
+                        chat_id=user.telegram_id,
+                        text=text,
+                        parse_mode='HTML',
+                        reply_markup=keyboard,
+                        user=user,
+                    )
+                    settings_data['last_friday_promo'] = friday_id
+                    user.notification_settings = settings_data
+                    logger.info('Отправлен пятничный промо-пуш со скидкой 25%', telegram_id=user.telegram_id)
+                except (TelegramForbiddenError, TelegramBadRequest) as exc:
+                    await self._handle_unreachable_user(user, exc, 'пятничное промо')
+                except Exception as err:
+                    logger.warning('Не удалось отправить пятничное промо', error=str(err))
 
     async def _check_trial_channel_subscriptions(self, db: AsyncSession):
         """Background reconciliation of channel subscriptions (rate-limited).
