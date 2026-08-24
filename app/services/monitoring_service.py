@@ -393,6 +393,7 @@ class MonitoringService:
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
+                await self._check_unactivated_trial_users(db)
                 await self._check_trial_channel_subscriptions(db)
                 await self._check_expired_subscription_followups(db)
                 await self._check_traffic_warnings(db)
@@ -900,6 +901,98 @@ class MonitoringService:
 
         except Exception as e:
             logger.error('Ошибка проверки истекающих тестовых подписок', error=e)
+
+    async def _check_unactivated_trial_users(self, db: AsyncSession):
+        """Send automated reminder to users who registered but haven't activated a trial after 3h or 24h."""
+        if not NotificationSettingsService.are_notifications_globally_enabled():
+            return
+
+        now = datetime.now(UTC)
+        try:
+            from aiogram.types import InlineKeyboardMarkup
+            from app.keyboards.inline import build_miniapp_or_callback_button
+
+            # Query active users created between 3 hours and 7 days ago who never had a paid sub
+            result = await db.execute(
+                select(User)
+                .options(selectinload(User.subscriptions))
+                .where(
+                    and_(
+                        User.status == UserStatus.ACTIVE.value,
+                        User.has_had_paid_subscription == False,
+                        User.created_at <= now - timedelta(hours=3),
+                        User.created_at >= now - timedelta(days=7),
+                    )
+                )
+            )
+            users = result.scalars().all()
+
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [build_miniapp_or_callback_button(text='🎁 Активировать бесплатный тест', callback_data='menu_trial')],
+                ]
+            )
+
+            for user in users:
+                if not user.telegram_id:
+                    continue
+                # If user already has any subscription (active, trial, or expired), skip
+                if user.subscriptions:
+                    continue
+
+                settings_data = dict(getattr(user, 'notification_settings', None) or {})
+                hours_since = (now - user.created_at).total_seconds() / 3600.0
+
+                # 3-hour reminder
+                if 3 <= hours_since < 24 and not settings_data.get('unactivated_trial_3h'):
+                    texts = get_texts(user.language)
+                    text = texts.get(
+                        'TRIAL_UNACTIVATED_3H',
+                        '🎁 <b>Вы ещё не забрали бесплатный тест VPN!</b>\n\n'
+                        'Вы зашли в бота, но пока не активировали пробный период.\n\n'
+                        'Тест абсолютно бесплатный, без привязки карт и настраивается за 1 минуту.\n\n'
+                        'Нажмите кнопку ниже, чтобы включить тестовый доступ прямо сейчас!'
+                    )
+                    try:
+                        await self._send_message_with_logo(
+                            chat_id=user.telegram_id,
+                            text=text,
+                            parse_mode='HTML',
+                            reply_markup=keyboard,
+                            user=user,
+                        )
+                        settings_data['unactivated_trial_3h'] = True
+                        user.notification_settings = settings_data
+                        logger.info('Отправлено 3h напоминание о неактивированном триале', telegram_id=user.telegram_id)
+                    except (TelegramForbiddenError, TelegramBadRequest) as exc:
+                        await self._handle_unreachable_user(user, exc, 'напоминание о неактивированном триале 3ч')
+                    except Exception as err:
+                        logger.warning('Не удалось отправить 3h напоминание о триале', error=str(err))
+
+                # 24-hour reminder
+                elif hours_since >= 24 and not settings_data.get('unactivated_trial_24h'):
+                    texts = get_texts(user.language)
+                    text = texts.get(
+                        'TRIAL_UNACTIVATED_24H',
+                        '⚡️ <b>Ваш быстрый VPN всё ещё ждёт вас!</b>\n\n'
+                        'Не упустите возможность протестировать высокую скорость и стабильный доступ ко всем заблокированным сайтам и сервисам без ограничений.\n\n'
+                        'Попробуйте прямо сейчас бесплатно в один клик!'
+                    )
+                    try:
+                        await self._send_message_with_logo(
+                            chat_id=user.telegram_id,
+                            text=text,
+                            parse_mode='HTML',
+                            reply_markup=keyboard,
+                            user=user,
+                        )
+                        settings_data['unactivated_trial_24h'] = True
+                        user.notification_settings = settings_data
+                        logger.info('Отправлено 24h напоминание о неактивированном триале', telegram_id=user.telegram_id)
+                    except (TelegramForbiddenError, TelegramBadRequest) as exc:
+                        await self._handle_unreachable_user(user, exc, 'напоминание о неактивированном триале 24ч')
+                    except Exception as err:
+                        logger.warning('Не удалось отправить 24h напоминание о триале', error=str(err))
 
     async def _check_trial_channel_subscriptions(self, db: AsyncSession):
         """Background reconciliation of channel subscriptions (rate-limited).
@@ -1981,10 +2074,10 @@ class MonitoringService:
 
 Ваш пробный доступ истекает уже через 2 часа.
 
-💎 <b>Понравилась скорость и стабильность?</b>
+<b>Понравилась скорость и стабильность?</b>
 Переходите на полный тариф, чтобы не терять защиту!
 
-⚡️ Оформите прямо сейчас и сохраните непрерывный доступ!
+Оформите прямо сейчас и сохраните непрерывный доступ!
 """
 
             from aiogram.types import InlineKeyboardMarkup
