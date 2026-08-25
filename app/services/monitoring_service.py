@@ -393,6 +393,7 @@ class MonitoringService:
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
+                await self._check_trial_inactive_notifications(db)
                 await self._check_trial_channel_subscriptions(db)
                 await self._check_expired_subscription_followups(db)
                 await self._check_traffic_warnings(db)
@@ -900,6 +901,97 @@ class MonitoringService:
 
         except Exception as e:
             logger.error('Ошибка проверки истекающих тестовых подписок', error=e)
+
+    async def _check_trial_inactive_notifications(self, db: AsyncSession):
+        """Check active trial subscriptions with 0 used traffic after 1h or 24h and notify."""
+        if not NotificationSettingsService.are_notifications_globally_enabled():
+            return
+
+        now = datetime.now(UTC)
+        try:
+            from aiogram.types import InlineKeyboardMarkup
+            from app.keyboards.inline import build_miniapp_or_callback_button
+
+            result = await db.execute(
+                select(Subscription)
+                .join(Subscription.user)
+                .options(selectinload(Subscription.user))
+                .where(
+                    and_(
+                        Subscription.status.in_([SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value]),
+                        Subscription.is_trial == True,
+                        Subscription.traffic_used_gb <= 0.005,
+                        Subscription.created_at <= now - timedelta(hours=1),
+                        Subscription.end_date > now,
+                        User.status == UserStatus.ACTIVE.value,
+                    )
+                )
+            )
+            inactive_trials = result.scalars().all()
+
+            for subscription in inactive_trials:
+                user = subscription.user
+                if not user or not user.telegram_id:
+                    continue
+
+                hours_since = (now - subscription.created_at).total_seconds() / 3600.0
+
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [build_miniapp_or_callback_button(text='🚀 Инструкция по подключению', callback_data='menu_subscription')],
+                        [build_miniapp_or_callback_button(text='🆘 Помощь поддержки', callback_data='menu_support')],
+                    ]
+                )
+
+                # 1 hour check (between 1h and 24h)
+                if 1.0 <= hours_since < 24.0:
+                    if not await notification_sent(db, user.id, subscription.id, 'trial_inactive_1h'):
+                        texts = get_texts(user.language)
+                        text = texts.get(
+                            'TRIAL_INACTIVE_1H',
+                            '💡 <b>Возникли трудности с подключением?</b>\n\n'
+                            'Прошёл час с момента получения теста, но вы ещё не подключились.\n\n'
+                            'Настройка занимает меньше 1 минуты! Откройте нашу простую пошаговую инструкцию или напишите в поддержку — мы онлайн и поможем.'
+                        )
+                        try:
+                            await self._send_message_with_logo(
+                                chat_id=user.telegram_id,
+                                text=text,
+                                parse_mode='HTML',
+                                reply_markup=keyboard,
+                                user=user,
+                            )
+                            await record_notification(db, user.id, subscription.id, 'trial_inactive_1h')
+                            logger.info('Отправлено напоминание об отсутствии трафика 1ч', telegram_id=user.telegram_id)
+                        except (TelegramForbiddenError, TelegramBadRequest) as exc:
+                            await self._handle_unreachable_user(user, exc, 'напоминание 1ч без трафика')
+                        except Exception as err:
+                            logger.warning('Ошибка отправки напоминания 1ч без трафика', error=str(err))
+
+                # 24 hour check
+                elif hours_since >= 24.0:
+                    if not await notification_sent(db, user.id, subscription.id, 'trial_inactive_24h'):
+                        texts = get_texts(user.language)
+                        text = texts.get(
+                            'TRIAL_INACTIVE_24H',
+                            '🚀 <b>Не забудьте протестировать свой VPN!</b>\n\n'
+                            'Прошли сутки, а вы ещё не оценили наш сервис в деле.\n\n'
+                            'Время триала идёт — откройте инструкцию по подключению или обратитесь в поддержку, если что-то не получается настроить!'
+                        )
+                        try:
+                            await self._send_message_with_logo(
+                                chat_id=user.telegram_id,
+                                text=text,
+                                parse_mode='HTML',
+                                reply_markup=keyboard,
+                                user=user,
+                            )
+                            await record_notification(db, user.id, subscription.id, 'trial_inactive_24h')
+                            logger.info('Отправлено напоминание об отсутствии трафика 24ч', telegram_id=user.telegram_id)
+                        except (TelegramForbiddenError, TelegramBadRequest) as exc:
+                            await self._handle_unreachable_user(user, exc, 'напоминание 24ч без трафика')
+                        except Exception as err:
+                            logger.warning('Ошибка отправки напоминания 24ч без трафика', error=str(err))
 
     async def _check_trial_channel_subscriptions(self, db: AsyncSession):
         """Background reconciliation of channel subscriptions (rate-limited).
