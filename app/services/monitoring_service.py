@@ -1018,6 +1018,9 @@ class MonitoringService:
                         except Exception as err:
                             logger.warning('Ошибка отправки напоминания 24ч без трафика', error=str(err))
 
+        except Exception as e:
+            logger.error('Ошибка проверки неактивных триалов', error=str(e))
+
     async def _check_trial_channel_subscriptions(self, db: AsyncSession):
         """Background reconciliation of channel subscriptions (rate-limited).
 
