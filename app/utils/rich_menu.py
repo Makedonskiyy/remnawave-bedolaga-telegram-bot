@@ -419,7 +419,7 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
         # действий не влезает на мобильных (таблица уезжает за край экрана) —
         # colspan-строка видна всегда.
         if actual_status in {'active', 'trial', 'limited'}:
-            usage_parts = [f'📊 {html.escape(_traffic_usage_text(subscription, texts))}']
+            usage_parts = [f'<tg-emoji emoji-id="5447431253445875826">📊</tg-emoji> {html.escape(_traffic_usage_text(subscription, texts))}']
             device_limit = getattr(subscription, 'device_limit', None)
             if device_limit is not None:
                 # 0 — безлимит (HWID выключен), а не «нет устройств»: строку не прячем

@@ -1241,7 +1241,7 @@
   "MAIN_MENU_RICH_TABLE_UNTIL": "Действует до",
   "MAIN_MENU_RICH_TARIFF": "📦 Тариф: {tariff}",
   "MAIN_MENU_RICH_TARIFF_FALLBACK": "Подписка",
-  "MAIN_MENU_RICH_TRAFFIC": "📊 Трафик: {traffic}",
+  "MAIN_MENU_RICH_TRAFFIC": "<tg-emoji emoji-id=\"5447431253445875826\">📊</tg-emoji> Трафик: {traffic}",
   "MAIN_MENU_RICH_TRIAL_ACTIVATED": "🎉 <b>Тестовая подписка активирована!</b>",
   "MAIN_MENU_RICH_TRIAL_BUTTON": "🚀 Активировать триал",
   "MAIN_MENU_TEST_ACCESS_HEADER": "🧪 Тестовые сервера активны: {servers}",
