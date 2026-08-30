@@ -27,7 +27,7 @@ SELF_CLOSING_TAGS = {'br', 'hr', 'img'}
 # Разрешённые атрибуты для HTML-тегов
 ALLOWED_TAG_ATTRIBUTES = {
     'a': {'href'},
-    'tg-emoji': {'emoji-id'},
+    'tg-emoji': {'emoji-id', 'emoji_id'},
     'span': {'class'},
 }
 

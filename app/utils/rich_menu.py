@@ -423,7 +423,7 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
             device_limit = getattr(subscription, 'device_limit', None)
             if device_limit is not None:
                 # 0 — безлимит (HWID выключен), а не «нет устройств»: строку не прячем
-                usage_parts.append(f'📱 {Texts.format_device_limit(device_limit)}')
+                usage_parts.append(f'<tg-emoji emoji-id="5453945060976534083">📱</tg-emoji> {Texts.format_device_limit(device_limit)}')
             connect_link = _connect_link(subscription, texts)
             if connect_link:
                 usage_parts.append(connect_link)
@@ -511,7 +511,7 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
     username = getattr(user, 'username', None)
     has_name = bool(getattr(user, 'first_name', None) or getattr(user, 'last_name', None))
     user_name = format_username_link(username) if username and not has_name else html.escape(user.full_name or '')
-    blocks.append(f'<h4>👤 {user_name}</h4>')
+    blocks.append(f'<h4><tg-emoji emoji-id="5474273338757001002">👤</tg-emoji> {user_name}</h4>')
     blocks.append('<hr/>')
 
     if settings.is_multi_tariff_enabled():
