@@ -1224,7 +1224,7 @@
   "MAIN_MENU_RICH_BALANCE": "<tg-emoji emoji-id=\"5447285164428272967\">💰</tg-emoji> Баланс: {balance}",
   "MAIN_MENU_RICH_CONNECT": "⚡ Подключить",
   "MAIN_MENU_RICH_DAYS_LEFT": "осталось {days} дн.",
-  "MAIN_MENU_RICH_DEVICES": "<tg-emoji emoji-id=\"5453945060976534083\">📱</tg-emoji> Устройства: {devices}",
+  "MAIN_MENU_RICH_DEVICES": "📱 Устройства: {devices}",
   "MAIN_MENU_RICH_EXPIRES_RELATIVE": "⏳ истекает {when}",
   "MAIN_MENU_RICH_HINTS_SUMMARY": "💡 Акции и подсказки",
   "MAIN_MENU_RICH_RENEW": "🔄 Продлить",

@@ -423,7 +423,7 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
             device_limit = getattr(subscription, 'device_limit', None)
             if device_limit is not None:
                 # 0 — безлимит (HWID выключен), а не «нет устройств»: строку не прячем
-                usage_parts.append(f'<tg-emoji emoji-id="5453945060976534083">📱</tg-emoji> {Texts.format_device_limit(device_limit)}')
+                usage_parts.append(f'📱 {Texts.format_device_limit(device_limit)}')
             connect_link = _connect_link(subscription, texts)
             if connect_link:
                 usage_parts.append(connect_link)
