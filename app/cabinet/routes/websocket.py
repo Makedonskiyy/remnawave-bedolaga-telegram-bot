@@ -13,6 +13,12 @@ from app.config import settings
 from app.database.crud.user import get_user_by_id
 from app.database.database import AsyncSessionLocal
 
+try:
+    from uvicorn.protocols.utils import ClientDisconnected
+except ImportError:
+    class ClientDisconnected(Exception):
+        pass
+
 
 logger = structlog.get_logger(__name__)
 
@@ -78,8 +84,11 @@ class CabinetConnectionManager:
         for ws in connections:
             try:
                 await ws.send_text(data)
+            except (ClientDisconnected, WebSocketDisconnect):
+                disconnected.add(ws)
             except Exception as e:
-                logger.warning('Failed to send to user', user_id=user_id, e=e)
+                if e.__class__.__name__ != 'ClientDisconnected':
+                    logger.debug('Failed to send to user WS', user_id=user_id, e=str(e))
                 disconnected.add(ws)
 
         # Cleanup disconnected
@@ -104,8 +113,13 @@ class CabinetConnectionManager:
             for ws in connections:
                 try:
                     await ws.send_text(data)
+                except (ClientDisconnected, WebSocketDisconnect):
+                    if user_id not in disconnected_by_user:
+                        disconnected_by_user[user_id] = set()
+                    disconnected_by_user[user_id].add(ws)
                 except Exception as e:
-                    logger.warning('Failed to send to admin', user_id=user_id, e=e)
+                    if e.__class__.__name__ != 'ClientDisconnected':
+                        logger.debug('Failed to send to admin WS', user_id=user_id, e=str(e))
                     if user_id not in disconnected_by_user:
                         disconnected_by_user[user_id] = set()
                     disconnected_by_user[user_id].add(ws)
@@ -167,8 +181,11 @@ async def cabinet_websocket_endpoint(websocket: WebSocket):
     if not token:
         logger.debug('Cabinet WS: No token from', client_host=client_host)
         # Принимаем и сразу закрываем с кодом ошибки
-        await websocket.accept()
-        await websocket.close(code=1008, reason='Unauthorized: No token')
+        try:
+            await websocket.accept()
+            await websocket.close(code=1008, reason='Unauthorized: No token')
+        except (ClientDisconnected, WebSocketDisconnect, Exception):
+            pass
         return
 
     # Верифицируем токен
@@ -177,16 +194,25 @@ async def cabinet_websocket_endpoint(websocket: WebSocket):
     if not user_id:
         logger.debug('Cabinet WS: Invalid token from', client_host=client_host)
         # Принимаем и сразу закрываем с кодом ошибки
-        await websocket.accept()
-        await websocket.close(code=1008, reason='Unauthorized: Invalid token')
+        try:
+            await websocket.accept()
+            await websocket.close(code=1008, reason='Unauthorized: Invalid token')
+        except (ClientDisconnected, WebSocketDisconnect, Exception):
+            pass
         return
 
     # Принимаем соединение
     try:
         await websocket.accept()
         logger.debug('Cabinet WS accepted: user_id is_admin', user_id=user_id, is_admin=is_admin)
+    except (ClientDisconnected, WebSocketDisconnect):
+        logger.debug('Cabinet WS: Client disconnected before accept', client_host=client_host)
+        return
     except Exception as e:
-        logger.error('Cabinet WS: Failed to accept from', client_host=client_host, e=e)
+        if e.__class__.__name__ == 'ClientDisconnected':
+            logger.debug('Cabinet WS: Client disconnected before accept', client_host=client_host)
+        else:
+            logger.warning('Cabinet WS: Failed to accept from', client_host=client_host, e=str(e))
         return
 
     # Регистрируем подключение
@@ -214,16 +240,21 @@ async def cabinet_websocket_endpoint(websocket: WebSocket):
 
             except json.JSONDecodeError:
                 logger.warning('Cabinet WS: Invalid JSON from user', user_id=user_id)
-            except WebSocketDisconnect:
+            except (ClientDisconnected, WebSocketDisconnect):
                 break
             except Exception as e:
-                logger.exception('Cabinet WS error for user', user_id=user_id, e=e)
+                if e.__class__.__name__ == 'ClientDisconnected':
+                    break
+                logger.warning('Cabinet WS error in receive loop for user', user_id=user_id, e=str(e))
                 break
 
-    except WebSocketDisconnect:
+    except (ClientDisconnected, WebSocketDisconnect):
         logger.debug('Cabinet WS disconnected: user_id', user_id=user_id)
     except Exception as e:
-        logger.exception('Cabinet WS error', e=e)
+        if e.__class__.__name__ == 'ClientDisconnected':
+            logger.debug('Cabinet WS disconnected: user_id', user_id=user_id)
+        else:
+            logger.warning('Cabinet WS error', user_id=user_id, e=str(e))
     finally:
         await cabinet_ws_manager.disconnect(websocket, user_id)
 
