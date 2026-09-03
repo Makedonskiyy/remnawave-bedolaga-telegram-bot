@@ -245,11 +245,13 @@ async def show_main_menu(
 
     if not await try_edit_rich_main_menu(callback, db_user, texts, db, keyboard):
         menu_text = await get_main_menu_text(db_user, texts, db)
+        menu_banner = 'main' if has_active_subscription else 'subscription_expired'
         await edit_or_answer_photo(
             callback=callback,
             caption=menu_text,
             keyboard=keyboard,
             parse_mode='HTML',
+            banner_name=menu_banner,
         )
     if not skip_callback_answer:
         await callback.answer()

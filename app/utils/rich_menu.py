@@ -502,7 +502,13 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
     """Собирает rich-HTML главного меню (контент, без клавиатуры)."""
     blocks: list[str] = []
 
-    logo_url = _resolve_rich_logo_url()
+    from app.services.banner_service import get_banner_url
+
+    user_subs = getattr(user, 'subscriptions', None)
+    has_active = any(s.is_active for s in user_subs) if user_subs else False
+    target_banner = 'main' if has_active else 'subscription_expired'
+    banner_url = get_banner_url(target_banner)
+    logo_url = banner_url or _resolve_rich_logo_url()
     if logo_url:
         blocks.append(f'<img src="{html.escape(logo_url, quote=True)}"/>')
 

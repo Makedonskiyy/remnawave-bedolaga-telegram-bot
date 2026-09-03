@@ -128,18 +128,21 @@ async def try_send_rich_notification(
     text: str,
     *,
     keyboard: InlineKeyboardMarkup | None = None,
-    with_logo: bool = False,
+    with_logo: bool = True,
     timeout: float | None = None,
+    banner_name: str | None = None,
 ) -> bool:
-    """Шлёт уведомление rich-сообщением. ``False`` — отправить классическое.
+    """Попытка отправить rich-уведомление (Bot API 10.3).
 
-    Без ретраев: их делает классический путь, на который вызывающий обязан
-    откатиться при ``False``. Уведомления уходят в личный чат, поэтому Mini App
-    среди переносимых кнопок допустим.
+    Возвращает True при успехе, False при любой ошибке или несовместимости (в этом
+    случае вызывающий должен отправить уведомление классическим способом).
 
     ``with_logo`` вставляет шапку с логотипом тем же способом, что и rich-меню:
     публичной ссылкой в ``<img>``, а не загрузкой файла. Так уведомления
     мониторинга не теряют логотип при переходе на rich.
+
+    ``banner_name`` позволяет передать каноническое имя баннера (ticket, balance,
+    subscription_expiring, subscription_expired, referral и т.д.).
 
     ``timeout`` ограничивает ОДНУ попытку. Он обязателен там, где отправка идёт
     по списку получателей: без него залипший запрос держит await до таймаута
@@ -148,7 +151,13 @@ async def try_send_rich_notification(
     if not settings.USER_NOTIFICATIONS_RICH_ENABLED or not is_rich_menu_enabled():
         return False
 
-    logo_url = _resolve_rich_logo_url() if with_logo else ''
+    if banner_name:
+        from app.services.banner_service import get_banner_url
+
+        logo_url = get_banner_url(banner_name) or (_resolve_rich_logo_url() if with_logo else '')
+    else:
+        logo_url = _resolve_rich_logo_url() if with_logo else ''
+
     rich_html = build_notification_rich_html(text, logo_url=logo_url)
     if rich_html is None or len(rich_html) > RICH_TEXT_LIMIT:
         return False

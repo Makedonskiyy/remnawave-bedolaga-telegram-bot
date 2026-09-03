@@ -492,6 +492,35 @@ async def get_bot_logo():
     )
 
 
+@router.get('/banner/{banner_name}')
+async def get_bot_banner(banner_name: str):
+    """Get contextual bot banner (e.g. welcome, main, ticket, balance, referral)."""
+    from app.services.banner_service import get_banner_path
+
+    banner_path = get_banner_path(banner_name)
+    if not banner_path or not await asyncio.to_thread(banner_path.is_file):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Banner not found')
+
+    suffix = banner_path.suffix.lower()
+    media_types = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp',
+    }
+    media_type = media_types.get(suffix, 'image/png')
+
+    return FileResponse(
+        banner_path,
+        media_type=media_type,
+        headers={
+            'Cache-Control': 'public, max-age=3600',
+            'X-Content-Type-Options': 'nosniff',
+            'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        },
+    )
+
+
 class BotStartVideoResponse(BaseModel):
     """Состояние видео стартового меню бота."""
 

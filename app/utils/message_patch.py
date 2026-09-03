@@ -147,8 +147,8 @@ _PRIVACY_RESTRICTED_CODE = 'BUTTON_USER_PRIVACY_RESTRICTED'
 _logo_file_id: str | None = None
 
 
-def get_logo_media():
-    """Возвращает кешированный file_id или FSInputFile для логотипа.
+def get_logo_media(banner_name: str | None = None):
+    """Возвращает кешированный file_id или FSInputFile для логотипа или баннера.
 
     Returns None if the logo file on disk is missing or a directory — callers
     must fall back to text-only sends (see Telegram bug #586617).
@@ -156,6 +156,14 @@ def get_logo_media():
     If the source file is too large or too high-resolution for Telegram, a
     cached resized copy is used instead (see Telegram bug #339184).
     """
+    from app.services.banner_service import get_banner_media, get_current_banner
+
+    target = banner_name or get_current_banner()
+    if target:
+        media = get_banner_media(target)
+        if media is not None:
+            return media
+
     if _logo_file_id:
         return _logo_file_id
     if not _logo_path_valid:
@@ -166,12 +174,19 @@ def get_logo_media():
     return FSInputFile(_logo_send_path)
 
 
-def _cache_logo_file_id(result: Message | None) -> None:
-    """Извлекает и кеширует file_id логотипа из ответа Telegram."""
-    global _logo_file_id
-    if _logo_file_id or result is None:
+def _cache_logo_file_id(result: Message | None, banner_name: str | None = None) -> None:
+    """Извлекает и кеширует file_id логотипа или баннера из ответа Telegram."""
+    if not result or not hasattr(result, 'photo') or not result.photo:
         return
-    if hasattr(result, 'photo') and result.photo:
+
+    from app.services.banner_service import cache_banner_file_id, get_current_banner
+
+    target = banner_name or get_current_banner()
+    if target:
+        cache_banner_file_id(target, result)
+
+    global _logo_file_id
+    if not _logo_file_id:
         _logo_file_id = result.photo[-1].file_id
 
 
@@ -274,6 +289,7 @@ def is_topic_required_error(error: Exception) -> bool:
 
 
 async def _answer_with_photo(self: Message, text: str = None, **kwargs):
+    banner_name = kwargs.pop('banner_name', None)
     # Уважаем флаг в рантайме: если логотип выключен — не подменяем ответ
     if not settings.ENABLE_LOGO_MODE:
         # Фото-сообщения не показывают web page preview, текстовые — показывают.
@@ -288,10 +304,11 @@ async def _answer_with_photo(self: Message, text: str = None, **kwargs):
         pass
     language = _get_language(self)
 
-    if LOGO_PATH.exists():
+    media = get_logo_media(banner_name)
+    if media is not None:
         try:
-            result = await self.answer_photo(get_logo_media(), caption=text, **kwargs)
-            _cache_logo_file_id(result)
+            result = await self.answer_photo(media, caption=text, **kwargs)
+            _cache_logo_file_id(result, banner_name)
             return result
         except TelegramBadRequest as error:
             if is_topic_required_error(error):
@@ -329,6 +346,7 @@ async def _answer_with_photo(self: Message, text: str = None, **kwargs):
 
 
 async def _edit_with_photo(self: Message, text: str, **kwargs):
+    banner_name = kwargs.pop('banner_name', None)
     # Уважаем флаг в рантайме: если логотип выключен — не подменяем редактирование
     if not settings.ENABLE_LOGO_MODE:
         kwargs.setdefault('disable_web_page_preview', True)
@@ -367,10 +385,7 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
                 return await _text_answer(self, text, **kwargs)
         except Exception:
             pass
-        if LOGO_PATH.exists():
-            media = get_logo_media()
-        else:
-            media = self.photo[-1].file_id
+        media = get_logo_media(banner_name) or self.photo[-1].file_id
         media_kwargs = {'media': media, 'caption': text}
         edit_kwargs = dict(kwargs)
         if 'parse_mode' in edit_kwargs:
@@ -379,7 +394,9 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
         else:
             media_kwargs['parse_mode'] = 'HTML'
         try:
-            return await self.edit_media(InputMediaPhoto(**media_kwargs), **edit_kwargs)
+            result = await self.edit_media(InputMediaPhoto(**media_kwargs), **edit_kwargs)
+            _cache_logo_file_id(result if isinstance(result, Message) else None, banner_name)
+            return result
         except TelegramBadRequest as error:
             if is_topic_required_error(error):
                 return None

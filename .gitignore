@@ -46,6 +46,8 @@
 !docs/**
 !assets/
 !assets/**
+!banners/
+!banners/**
 !locales/
 !locales/**
 !.github/

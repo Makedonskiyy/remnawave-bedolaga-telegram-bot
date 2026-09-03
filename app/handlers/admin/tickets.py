@@ -1089,6 +1089,7 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
                 text=base_text,
                 keyboard=keyboard,
                 with_logo=True,
+                banner_name='ticket',
             )
             if rich_sent:
                 logger.info('Ticket reply rich notification sent to user', ticket_id=ticket.id, chat_id=chat_id)
@@ -1096,7 +1097,23 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
         except Exception as rich_err:
             logger.debug('Не удалось отправить rich-уведомление тикета, откат на классику', error=str(rich_err))
 
-        # Фоллбек: текстовое уведомление
+        # Фоллбек: фото или текстовое уведомление
+        from app.services.banner_service import BANNER_TICKET, get_banner_media
+
+        ticket_media = get_banner_media(BANNER_TICKET)
+        if settings.ENABLE_LOGO_MODE and ticket_media and len(base_text) <= 1024:
+            try:
+                await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=ticket_media,
+                    caption=base_text,
+                    reply_markup=keyboard,
+                )
+                logger.info('Ticket reply photo notification sent to user', ticket_id=ticket.id, chat_id=chat_id)
+                return
+            except Exception as e:
+                logger.warning('Не удалось отправить фото-уведомление тикета', error=e)
+
         await bot.send_message(
             chat_id=chat_id,
             text=base_text,

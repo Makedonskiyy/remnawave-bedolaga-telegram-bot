@@ -26,14 +26,22 @@ MAX_RETRIES = 3
 RETRY_DELAY = 0.5
 
 
-def _resolve_media(message: types.Message):
+def _resolve_media(message: types.Message, banner_name: str | None = None):
+    from app.services.banner_service import get_banner_media, get_current_banner
+
+    target = banner_name or get_current_banner()
+    if target:
+        media = get_banner_media(target)
+        if media is not None:
+            return media
+
     if isinstance(message, InaccessibleMessage):
-        return get_logo_media()
+        return get_logo_media(banner_name)
     if settings.ENABLE_LOGO_MODE and not is_qr_message(message):
-        return get_logo_media()
+        return get_logo_media(banner_name)
     if message.photo and not is_qr_message(message):
         return message.photo[-1].file_id
-    return get_logo_media()
+    return get_logo_media(banner_name)
 
 
 def _get_language(callback: types.CallbackQuery) -> str | None:
@@ -59,6 +67,8 @@ async def safe_edit_or_resend(
     message: types.Message,
     text: str,
     reply_markup: types.InlineKeyboardMarkup | None = None,
+    *,
+    banner_name: str | None = None,
 ) -> None:
     """Безопасно отредактировать текст сообщения или отправить новое при ошибке.
 
@@ -69,19 +79,29 @@ async def safe_edit_or_resend(
         message: Целевое сообщение.
         text: Текст для отправки/редактирования.
         reply_markup: Клавиатура (опционально).
+        banner_name: Имя баннера (опционально).
     """
-    try:
-        await message.edit_text(text, reply_markup=reply_markup)
-    except TelegramBadRequest as error:
-        # Контент не изменился (повторное нажатие кнопки) — ничего не делаем,
-        # иначе будем без нужды пересоздавать сообщение и спамить чат.
-        if 'message is not modified' in str(error).lower():
-            return
-        # Уведомление-фото или недоступное сообщение: edit_text не работает
-        # Удаляем исходное и отправляем новое
-        with suppress(TelegramAPIError):
-            await message.delete()
-        await message.answer(text, reply_markup=reply_markup)
+    from app.services.banner_service import banner_scope
+
+    async def _do_edit():
+        try:
+            await message.edit_text(text, reply_markup=reply_markup)
+        except TelegramBadRequest as error:
+            # Контент не изменился (повторное нажатие кнопки) — ничего не делаем,
+            # иначе будем без нужды пересоздавать сообщение и спамить чат.
+            if 'message is not modified' in str(error).lower():
+                return
+            # Уведомление-фото или недоступное сообщение: edit_text не работает
+            # Удаляем исходное и отправляем новое
+            with suppress(TelegramAPIError):
+                await message.delete()
+            await message.answer(text, reply_markup=reply_markup)
+
+    if banner_name:
+        with banner_scope(banner_name):
+            await _do_edit()
+    else:
+        await _do_edit()
 
 
 async def _answer_text(
@@ -113,7 +133,14 @@ async def edit_or_answer_photo(
     parse_mode: str | None = 'HTML',
     *,
     force_text: bool = False,
+    banner_name: str | None = None,
 ) -> None:
+    from app.services.banner_service import detect_banner_from_callback, get_current_banner
+
+    target_banner = banner_name or get_current_banner()
+    if not target_banner and callback.data:
+        target_banner = detect_banner_from_callback(callback.data)
+
     resolved_parse_mode = parse_mode or 'HTML'
 
     # Если сообщение недоступно, отправляем новое сообщение
@@ -121,12 +148,12 @@ async def edit_or_answer_photo(
         try:
             if settings.ENABLE_LOGO_MODE and LOGO_PATH.exists():
                 result = await callback.message.answer_photo(
-                    photo=get_logo_media(),
+                    photo=get_logo_media(target_banner),
                     caption=caption,
                     reply_markup=keyboard,
                     parse_mode=resolved_parse_mode,
                 )
-                _cache_logo_file_id(result)
+                _cache_logo_file_id(result, target_banner)
             else:
                 await callback.message.answer(
                     caption,
@@ -179,7 +206,7 @@ async def edit_or_answer_photo(
             await _answer_text(callback, caption, keyboard, resolved_parse_mode, error)
         return
 
-    media = _resolve_media(callback.message)
+    media = _resolve_media(callback.message, target_banner)
 
     # Logo file unavailable (missing / directory bind-mount) — fall back to text.
     # See #586617: this used to surface as IsADirectoryError on every callback.
@@ -198,6 +225,7 @@ async def edit_or_answer_photo(
                 InputMediaPhoto(media=media, caption=caption, parse_mode=(parse_mode or 'HTML')),
                 reply_markup=keyboard,
             )
+            _cache_logo_file_id(callback.message, target_banner)
             return  # Успешно — выходим
         except TelegramNetworkError as net_error:
             if attempt < MAX_RETRIES - 1:
@@ -247,19 +275,19 @@ async def edit_or_answer_photo(
                 await callback.message.delete()
             except Exception:
                 pass
-            logo_media = get_logo_media()
+            logo_media = get_logo_media(target_banner)
             if logo_media is None:
                 await _answer_text(callback, caption, keyboard, resolved_parse_mode)
                 return
             try:
-                # Отправим как фото с логотипом
+                # Отправим как фото с логотипом/баннером
                 result = await callback.message.answer_photo(
                     photo=logo_media,
                     caption=caption,
                     reply_markup=keyboard,
                     parse_mode=resolved_parse_mode,
                 )
-                _cache_logo_file_id(result)
+                _cache_logo_file_id(result, target_banner)
             except (TelegramBadRequest, TelegramForbiddenError) as photo_error:
                 await _answer_text(callback, caption, keyboard, resolved_parse_mode, photo_error)
             except Exception:

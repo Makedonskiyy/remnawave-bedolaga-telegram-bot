@@ -325,10 +325,36 @@ class NotificationDeliveryService:
         # оно выбивается из общего вида. Ровно одна попытка: любой отказ (включая
         # разметку, которую rich не воспроизводит дословно) отдаёт False, и ниже
         # отрабатывает классический путь со своими ретраями, учётом и метриками.
+        from app.services.banner_service import (
+            BANNER_BALANCE,
+            BANNER_MAIN,
+            BANNER_REFERRAL,
+            BANNER_SUBSCRIPTION_EXPIRED,
+            BANNER_SUBSCRIPTION_EXPIRING,
+            BANNER_TICKET,
+            get_banner_media,
+        )
         from app.utils.rich_notify import try_send_rich_notification
 
+        banner_map = {
+            NotificationType.SUBSCRIPTION_EXPIRING: BANNER_SUBSCRIPTION_EXPIRING,
+            NotificationType.WINBACK_TRIAL_ENDING: BANNER_SUBSCRIPTION_EXPIRING,
+            NotificationType.SUBSCRIPTION_EXPIRED: BANNER_SUBSCRIPTION_EXPIRED,
+            NotificationType.WINBACK_EXPIRED_1D: BANNER_SUBSCRIPTION_EXPIRED,
+            NotificationType.BALANCE_TOPUP: BANNER_BALANCE,
+            NotificationType.BALANCE_LOW: BANNER_BALANCE,
+            NotificationType.REFERRAL_BONUS: BANNER_REFERRAL,
+            NotificationType.REFERRAL_REGISTERED: BANNER_REFERRAL,
+        }
+        target_banner = banner_map.get(notification_type, BANNER_MAIN)
+
         if await try_send_rich_notification(
-            bot, user.telegram_id, message, keyboard=markup, with_logo=settings.ENABLE_LOGO_MODE
+            bot,
+            user.telegram_id,
+            message,
+            keyboard=markup,
+            with_logo=settings.ENABLE_LOGO_MODE,
+            banner_name=target_banner,
         ):
             return True
 
@@ -338,9 +364,27 @@ class NotificationDeliveryService:
         # хотя это ожидаемая сетевая транзиент-ошибка.
         max_attempts = 3
         last_transient_error: Exception | None = None
+        banner_photo = get_banner_media(target_banner) if settings.ENABLE_LOGO_MODE else None
+        can_send_photo = banner_photo is not None and len(message) <= 1024
 
         for attempt in range(1, max_attempts + 1):
             try:
+                if can_send_photo:
+                    try:
+                        await asyncio.wait_for(
+                            bot.send_photo(
+                                chat_id=user.telegram_id,
+                                photo=banner_photo,
+                                caption=message,
+                                reply_markup=markup,
+                                parse_mode='HTML',
+                            ),
+                            timeout=15.0,
+                        )
+                        return True
+                    except Exception as photo_err:
+                        logger.debug('Не удалось отправить уведомление с фото, пробуем текстом', error=str(photo_err))
+
                 await asyncio.wait_for(
                     bot.send_message(
                         chat_id=user.telegram_id,

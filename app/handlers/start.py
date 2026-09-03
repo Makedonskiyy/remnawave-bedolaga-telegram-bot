@@ -298,7 +298,7 @@ def _split_start_param_subid(param: str | None) -> tuple[str | None, str | None]
     return head, tail
 
 
-async def answer_menu_with_media(message, text: str, keyboard, db) -> None:
+async def answer_menu_with_media(message, text: str, keyboard, db, banner_name: str | None = None) -> None:
     """Отвечает меню с медиа-шапкой на входящее сообщение (например, /start).
 
     Отличается от :func:`send_menu_with_media` тем, что при отсутствии видео
@@ -308,6 +308,8 @@ async def answer_menu_with_media(message, text: str, keyboard, db) -> None:
     без настроенного видео поведение остаётся ровно прежним.
     """
     from app.utils.message_patch import caption_exceeds_telegram_limit
+
+    target_banner = banner_name or 'main'
 
     if not caption_exceeds_telegram_limit(text):
         from app.services.start_media_service import get_start_video_file_id
@@ -328,7 +330,7 @@ async def answer_menu_with_media(message, text: str, keyboard, db) -> None:
                     error=str(video_error),
                 )
 
-    await message.answer(text, reply_markup=keyboard, parse_mode='HTML')
+    await message.answer(text, reply_markup=keyboard, parse_mode='HTML', banner_name=target_banner)
 
 
 async def send_menu_with_media(
@@ -337,6 +339,7 @@ async def send_menu_with_media(
     text: str,
     keyboard,
     db,
+    banner_name: str | None = None,
 ) -> None:
     """Отправляет меню с медиа-шапкой: видео → фото-логотип → обычный текст.
 
@@ -349,6 +352,7 @@ async def send_menu_with_media(
     """
     from app.utils.message_patch import _cache_logo_file_id, caption_exceeds_telegram_limit, get_logo_media
 
+    target_banner = banner_name or 'main'
     caption_fits = not caption_exceeds_telegram_limit(text)
 
     if caption_fits:
@@ -374,12 +378,12 @@ async def send_menu_with_media(
     if settings.ENABLE_LOGO_MODE and caption_fits:
         _result = await bot.send_photo(
             chat_id=chat_id,
-            photo=get_logo_media(),
+            photo=get_logo_media(target_banner),
             caption=text,
             reply_markup=keyboard,
             parse_mode='HTML',
         )
-        _cache_logo_file_id(_result)
+        _cache_logo_file_id(_result, target_banner)
         return
 
     await bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard, parse_mode='HTML')
@@ -1128,6 +1132,7 @@ async def _prompt_language_selection(message: types.Message, state: FSMContext) 
     await message.answer(
         _get_language_prompt_text(),
         reply_markup=get_language_selection_keyboard(),
+        banner_name='welcome',
     )
 
 
@@ -1173,6 +1178,7 @@ async def _continue_registration_after_language(
                         "У вас есть реферальный код? Введите его или нажмите 'Пропустить'",
                     ),
                     reply_markup=get_referral_code_keyboard(language),
+                    banner_name='welcome',
                 )
                 await state.set_state(RegistrationStates.waiting_for_referral_code)
                 logger.info('🔍 LANGUAGE: Ожидание ввода реферального кода')
@@ -1183,7 +1189,10 @@ async def _continue_registration_after_language(
 
     rules_text = await get_rules(language)
     try:
-        await answer_long_text(target_message, rules_text, reply_markup=get_rules_keyboard(language))
+        from app.services.banner_service import banner_scope
+
+        with banner_scope('welcome'):
+            await answer_long_text(target_message, rules_text, reply_markup=get_rules_keyboard(language))
     except TelegramForbiddenError:
         logger.warning(
             '⚠️ Пользователь заблокировал бота, пропускаем отправку правил',
@@ -1696,9 +1705,10 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             is_moderator=is_moderator,
             custom_buttons=custom_buttons,
         )
+        menu_banner = 'main' if has_active_subscription else 'subscription_expired'
         if not await try_answer_rich_main_menu(message, user, texts, db, keyboard):
             menu_text = await get_main_menu_text(user, texts, db)
-            await answer_menu_with_media(message, menu_text, keyboard, db)
+            await answer_menu_with_media(message, menu_text, keyboard, db, banner_name=menu_banner)
 
         if pinned_message and not pinned_message.send_before_menu:
             await _send_pinned_message(message.bot, db, user, pinned_message)
@@ -2356,9 +2366,10 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
             )
             if pinned_message and pinned_message.send_before_menu:
                 await _send_pinned_message(callback.bot, db, existing_user, pinned_message)
+            menu_banner = 'main' if has_active_subscription else 'subscription_expired'
             if not await try_answer_rich_main_menu(callback.message, existing_user, texts, db, keyboard):
                 menu_text = await get_main_menu_text(existing_user, texts, db)
-                await answer_menu_with_media(callback.message, menu_text, keyboard, db)
+                await answer_menu_with_media(callback.message, menu_text, keyboard, db, banner_name=menu_banner)
             if pinned_message and not pinned_message.send_before_menu:
                 await _send_pinned_message(callback.bot, db, existing_user, pinned_message)
         except Exception as e:
@@ -2582,6 +2593,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                 offer_text,
                 reply_markup=get_post_registration_keyboard(user.language),
                 parse_mode='HTML',
+                banner_name='welcome',
             )
             logger.info('✅ Приветственное сообщение отправлено пользователю', telegram_id=user.telegram_id)
             if pinned_message and not pinned_message.send_before_menu:
@@ -2594,6 +2606,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                         offer_text,
                         reply_markup=get_post_registration_keyboard(user.language),
                         parse_mode=None,
+                        banner_name='welcome',
                     )
                     if pinned_message and not pinned_message.send_before_menu:
                         await _send_pinned_message(callback.bot, db, user, pinned_message)
@@ -2641,9 +2654,10 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
             )
             if pinned_message and pinned_message.send_before_menu:
                 await _send_pinned_message(callback.bot, db, user, pinned_message)
+            menu_banner = 'main' if has_active_subscription else 'subscription_expired'
             if not await try_answer_rich_main_menu(callback.message, user, texts, db, keyboard):
                 menu_text = await get_main_menu_text(user, texts, db)
-                await answer_menu_with_media(callback.message, menu_text, keyboard, db)
+                await answer_menu_with_media(callback.message, menu_text, keyboard, db, banner_name=menu_banner)
             if pinned_message and not pinned_message.send_before_menu:
                 await _send_pinned_message(callback.bot, db, user, pinned_message)
             logger.info('✅ Главное меню показано пользователю', telegram_id=user.telegram_id)
@@ -2714,9 +2728,10 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
             )
             if pinned_message and pinned_message.send_before_menu:
                 await _send_pinned_message(message.bot, db, existing_user, pinned_message)
+            menu_banner = 'main' if has_active_subscription else 'subscription_expired'
             if not await try_answer_rich_main_menu(message, existing_user, texts, db, keyboard):
                 menu_text = await get_main_menu_text(existing_user, texts, db)
-                await answer_menu_with_media(message, menu_text, keyboard, db)
+                await answer_menu_with_media(message, menu_text, keyboard, db, banner_name=menu_banner)
             if pinned_message and not pinned_message.send_before_menu:
                 await _send_pinned_message(message.bot, db, existing_user, pinned_message)
         except Exception as e:
@@ -2977,6 +2992,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                 offer_text,
                 reply_markup=keyboard,
                 parse_mode='HTML',
+                banner_name='welcome',
             )
             logger.info('✅ Приветственное сообщение отправлено пользователю', telegram_id=user.telegram_id)
             if pinned_message and not pinned_message.send_before_menu:
@@ -2989,6 +3005,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                         offer_text,
                         reply_markup=keyboard,
                         parse_mode=None,
+                        banner_name='welcome',
                     )
                     if pinned_message and not pinned_message.send_before_menu:
                         await _send_pinned_message(message.bot, db, user, pinned_message)
@@ -3036,9 +3053,10 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
             )
             if pinned_message and pinned_message.send_before_menu:
                 await _send_pinned_message(message.bot, db, user, pinned_message)
+            menu_banner = 'main' if has_active_subscription else 'subscription_expired'
             if not await try_answer_rich_main_menu(message, user, texts, db, keyboard):
                 menu_text = await get_main_menu_text(user, texts, db)
-                await answer_menu_with_media(message, menu_text, keyboard, db)
+                await answer_menu_with_media(message, menu_text, keyboard, db, banner_name=menu_banner)
             logger.info('✅ Главное меню показано пользователю', telegram_id=user.telegram_id)
             if pinned_message and not pinned_message.send_before_menu:
                 await _send_pinned_message(message.bot, db, user, pinned_message)
