@@ -295,7 +295,9 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
             inline_keyboard=[
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('VIEW_TICKET', '💬 Открыть тикет'), callback_data=f'view_ticket_{ticket.id}'
+                        text=texts.t('VIEW_TICKET', 'Открыть тикет'),
+                        callback_data=f'view_ticket_{ticket.id}',
+                        icon_custom_emoji_id='5447290623331705359',
                     )
                 ],
                 [
@@ -512,7 +514,9 @@ async def view_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSes
     )
     message_blocks: list[str] = []
     if ticket.messages:
-        message_blocks.append(f'<b>Переписка ({len(ticket.messages)}):</b>\n\n')
+        message_blocks.append(
+            f'<tg-emoji emoji-id="5447317290783645061">💬</tg-emoji> <b>Переписка ({len(ticket.messages)}):</b>\n\n'
+        )
         for msg in ticket.messages:
             sender = '<b>Вы</b>' if msg.is_user_message else '<b>Поддержка</b>'
             time_str = format_local_datetime(msg.created_at, "%d.%m %H:%M")
@@ -1099,7 +1103,7 @@ async def notify_admins_about_ticket_reply(
         safe_title = html.escape(title) if title else '—'
 
         notification_text = (
-            f'💬 <b>ОТВЕТ В ТИКЕТЕ #{ticket.id}</b>\n\n'
+            f'<tg-emoji emoji-id="5447317290783645061">💬</tg-emoji> <b>ОТВЕТ В ТИКЕТЕ #{ticket.id}</b>\n\n'
             f'<b>Пользователь:</b> {full_name}\n'
             f'<b>ID:</b> <code>{telegram_id_display}</code>\n'
             f'<b>Username:</b> {username_display}\n'

@@ -1405,7 +1405,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                 last_text = html.escape((last_msg.message_text if last_msg else ticket.title) or '')
 
                 prompt_text = (
-                    f'<b>Тикет #{ticket.id}</b> · {ticket.status_emoji} {ticket.status}\n\n'
+                    f'<tg-emoji emoji-id="5447317290783645061">💬</tg-emoji> <b>Тикет #{ticket.id}</b> · {ticket.status_emoji} {ticket.status}\n\n'
                     f'<b>Пользователь:</b> {user_name}\n'
                     f'<b>Тема:</b> {html.escape(ticket.title or "")}\n\n'
                     f'<b>Последнее сообщение:</b>\n'

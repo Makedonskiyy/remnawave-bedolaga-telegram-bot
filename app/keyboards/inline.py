@@ -3561,7 +3561,9 @@ def get_ticket_view_keyboard(
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('REPLY_TO_TICKET', '💬 Ответить'), callback_data=f'reply_ticket_{ticket_id}'
+                    text=texts.t('REPLY_TO_TICKET', 'Ответить'),
+                    callback_data=f'reply_ticket_{ticket_id}',
+                    icon_custom_emoji_id='5454349054190331246',
                 )
             ]
         )
@@ -3570,7 +3572,9 @@ def get_ticket_view_keyboard(
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('CLOSE_TICKET', '🔒 Закрыть тикет'), callback_data=f'close_ticket_{ticket_id}'
+                    text=texts.t('CLOSE_TICKET', 'Закрыть тикет'),
+                    callback_data=f'close_ticket_{ticket_id}',
+                    icon_custom_emoji_id='5447285649759576962',
                 )
             ]
         )
@@ -3586,7 +3590,9 @@ def get_ticket_reply_cancel_keyboard(language: str = DEFAULT_LANGUAGE) -> Inline
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=texts.t('CANCEL_REPLY', '❌ Отменить ответ'), callback_data='cancel_ticket_reply'
+                    text=texts.t('CANCEL_REPLY', 'Отменить ответ'),
+                    callback_data='cancel_ticket_reply',
+                    icon_custom_emoji_id='5447285649759576962',
                 )
             ]
         ]
@@ -3703,7 +3709,9 @@ def get_admin_ticket_view_keyboard(
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('REPLY_TO_TICKET', '💬 Ответить'), callback_data=f'admin_reply_ticket_{ticket_id}'
+                    text=texts.t('REPLY_TO_TICKET', 'Ответить'),
+                    callback_data=f'admin_reply_ticket_{ticket_id}',
+                    icon_custom_emoji_id='5454349054190331246',
                 )
             ]
         )
@@ -3712,7 +3720,9 @@ def get_admin_ticket_view_keyboard(
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('CLOSE_TICKET', '🔒 Закрыть тикет'), callback_data=f'admin_close_ticket_{ticket_id}'
+                    text=texts.t('CLOSE_TICKET', 'Закрыть тикет'),
+                    callback_data=f'admin_close_ticket_{ticket_id}',
+                    icon_custom_emoji_id='5447285649759576962',
                 )
             ]
         )
@@ -3832,8 +3842,9 @@ def get_ticket_notification_keyboard(
             keyboard.append(
                 [
                     InlineKeyboardButton(
-                        text=texts.t('REPLY_TO_TICKET', '💬 Ответить'),
+                        text=texts.t('REPLY_TO_TICKET', 'Ответить'),
                         callback_data=f'admin_reply_ticket_{ticket_id}',
+                        icon_custom_emoji_id='5454349054190331246',
                     )
                 ]
             )
@@ -3847,8 +3858,9 @@ def get_ticket_notification_keyboard(
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            text=texts.t('REPLY_TO_TICKET', '💬 Ответить'),
+                            text=texts.t('REPLY_TO_TICKET', 'Ответить'),
                             url=reply_url,
+                            icon_custom_emoji_id='5454349054190331246',
                         )
                     ]
                 )
@@ -3857,8 +3869,9 @@ def get_ticket_notification_keyboard(
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('CLOSE_TICKET', '🔒 Закрыть тикет'),
+                    text=texts.t('CLOSE_TICKET', 'Закрыть тикет'),
                     callback_data=f'admin_close_ticket_{ticket_id}',
+                    icon_custom_emoji_id='5447285649759576962',
                 )
             ]
         )
@@ -3900,7 +3913,9 @@ def get_admin_ticket_reply_cancel_keyboard(language: str = DEFAULT_LANGUAGE) -> 
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=texts.t('CANCEL_REPLY', '❌ Отменить ответ'), callback_data='cancel_admin_ticket_reply'
+                    text=texts.t('CANCEL_REPLY', 'Отменить ответ'),
+                    callback_data='cancel_admin_ticket_reply',
+                    icon_custom_emoji_id='5447285649759576962',
                 )
             ]
         ]

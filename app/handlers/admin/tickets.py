@@ -206,7 +206,9 @@ async def view_admin_ticket(
     # Формируем блоки сообщений
     message_blocks: list[str] = []
     if ticket.messages:
-        message_blocks.append(f'<b>Переписка ({len(ticket.messages)}):</b>\n\n')
+        message_blocks.append(
+            f'<tg-emoji emoji-id="5447317290783645061">💬</tg-emoji> <b>Переписка ({len(ticket.messages)}):</b>\n\n'
+        )
         for msg in ticket.messages:
             sender = '<b>Пользователь</b>' if msg.is_user_message else '<b>Поддержка</b>'
             time_str = msg.created_at.strftime("%d.%m %H:%M")
@@ -798,7 +800,7 @@ async def handle_admin_block_duration_input(message: types.Message, state: FSMCo
                 elif updated.user_reply_block_until:
                     ticket_text += f'⏳ <i>Блок до: {updated.user_reply_block_until.strftime("%d.%m.%Y %H:%M")}</i>\n\n'
             if updated.messages:
-                ticket_text += f'<b>Переписка ({len(updated.messages)}):</b>\n\n'
+                ticket_text += f'<tg-emoji emoji-id="5447317290783645061">💬</tg-emoji> <b>Переписка ({len(updated.messages)}):</b>\n\n'
                 for msg in updated.messages:
                     sender = '<b>Пользователь</b>' if msg.is_user_message else '<b>Поддержка</b>'
                     time_str = msg.created_at.strftime("%d.%m %H:%M")
@@ -1028,19 +1030,22 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
         # до обрезки нельзя: срез разорвал бы `&quot;` с тем же результатом.
         base_text = texts.t(
             'TICKET_REPLY_NOTIFICATION',
-            '💬 <b>Ответ по тикету #{ticket_id}</b>\n\n{reply_preview}',
+            '<tg-emoji emoji-id="5447317290783645061">💬</tg-emoji> <b>Ответ по тикету #{ticket_id}</b>\n\n{reply_preview}',
         ).format(ticket_id=ticket.id, reply_preview=html.escape(preview_text(reply_text)))
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('VIEW_TICKET', '💬 Открыть тикет'), callback_data=f'view_ticket_{ticket.id}'
+                        text=texts.t('VIEW_TICKET', 'Открыть тикет'),
+                        callback_data=f'view_ticket_{ticket.id}',
+                        icon_custom_emoji_id='5447290623331705359',
                     )
                 ],
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('CLOSE_NOTIFICATION', '✕ Закрыть'),
+                        text=texts.t('CLOSE_NOTIFICATION', 'Закрыть'),
                         callback_data=f'close_ticket_notification_{ticket.id}',
+                        icon_custom_emoji_id='5447285649759576962',
                     )
                 ],
             ]
