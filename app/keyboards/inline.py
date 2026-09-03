@@ -3770,6 +3770,7 @@ def get_ticket_notification_keyboard(
     fsm_enabled: bool = True,
     cabinet_button: InlineKeyboardButton | None = None,
     language: str = DEFAULT_LANGUAGE,
+    bot_username: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Клавиатура для уведомления о тикете (личный или групповой админ-чат).
 
@@ -3794,6 +3795,7 @@ def get_ticket_notification_keyboard(
             или t.me Mini App диплинк в группе). Размещается самым верхом. ``None`` —
             не cabinet-режим / кабинет не настроен.
         language: язык локализации.
+        bot_username: юзернейм бота (без @) для формирования ссылки ответа в группе/канале.
     """
     texts = get_texts(language)
     keyboard: list[list[InlineKeyboardButton]] = []
@@ -3823,17 +3825,33 @@ def get_ticket_notification_keyboard(
             ]
         )
 
-    # «Ответить» запускает FSM (ввод текста) — в группе/канале ненадёжно
-    # (privacy mode бота не пропускает обычный текст), поэтому только при fsm_enabled.
-    if not is_closed and fsm_enabled:
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('REPLY_TO_TICKET', '💬 Ответить'),
-                    callback_data=f'admin_reply_ticket_{ticket_id}',
+    # «Ответить»: в личке админа — обычный callback с FSM. В канале/группе —
+    # диплинк t.me/<bot>?start=reply_ticket_<id>, позволяющий ответить в 1 клик из лички с ботом!
+    if not is_closed:
+        if fsm_enabled:
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('REPLY_TO_TICKET', '💬 Ответить'),
+                        callback_data=f'admin_reply_ticket_{ticket_id}',
+                    )
+                ]
+            )
+        else:
+            from app.config import settings
+
+            target_bot_username = bot_username or getattr(settings, 'BOT_USERNAME', None)
+            if target_bot_username:
+                clean_name = target_bot_username.lstrip('@')
+                reply_url = f'https://t.me/{clean_name}?start=reply_ticket_{ticket_id}'
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('REPLY_TO_TICKET', '💬 Ответить'),
+                            url=reply_url,
+                        )
+                    ]
                 )
-            ]
-        )
     # «Закрыть» — обычный callback, работает везде, включая группу.
     if not is_closed:
         keyboard.append(

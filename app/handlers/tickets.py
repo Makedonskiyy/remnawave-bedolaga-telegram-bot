@@ -980,6 +980,7 @@ def _build_ticket_notification_keyboard(service: AdminNotificationService, ticke
         text=get_texts(settings.DEFAULT_LANGUAGE).t('OPEN_TICKET_IN_CABINET', '🗂 Открыть в кабинете'),
         in_group=(role == 'group'),
     )
+    bot_username = getattr(settings, 'BOT_USERNAME', None)
     return get_ticket_notification_keyboard(
         ticket.id,
         user_id=user.id if user else None,
@@ -991,6 +992,7 @@ def _build_ticket_notification_keyboard(service: AdminNotificationService, ticke
         fsm_enabled=(role != 'group'),
         cabinet_button=cabinet_button,
         language=settings.DEFAULT_LANGUAGE,
+        bot_username=bot_username,
     )
 
 
@@ -1033,18 +1035,16 @@ async def notify_admins_about_new_ticket(ticket: Ticket, db: AsyncSession):
         safe_title = html.escape(title) if title else '—'
 
         notification_text = (
-            f'🎫 <b>НОВЫЙ ТИКЕТ</b>\n\n'
-            f'🆔 <b>ID:</b> <code>{ticket.id}</code>\n'
-            f'👤 <b>Пользователь:</b> {full_name}\n'
-            f'🆔 <b>ID:</b> <code>{telegram_id_display}</code>\n'
-            f'📱 <b>Username:</b> {username_display}\n'
-            f'📝 <b>Заголовок:</b> {safe_title}\n'
+            f'🎫 <b>НОВЫЙ ТИКЕТ #{ticket.id}</b>\n\n'
+            f'<b>Пользователь:</b> {full_name}\n'
+            f'<b>ID:</b> <code>{telegram_id_display}</code>\n'
+            f'<b>Username:</b> {username_display}\n'
+            f'<b>Тема:</b> {safe_title}\n'
+            f'<b>Создан:</b> {format_local_datetime(ticket.created_at, "%d.%m.%Y %H:%M")}\n'
         )
 
         if message_preview:
-            notification_text += f'\n📩 <b>Сообщение:</b>\n{html.escape(message_preview)}\n'
-
-        notification_text += f'\n📅 <b>Создан:</b> {format_local_datetime(ticket.created_at, "%d.%m.%Y %H:%M")}\n'
+            notification_text += f'\n<b>Сообщение:</b>\n<blockquote>{html.escape(message_preview)}</blockquote>\n'
 
         from app.services.maintenance_service import maintenance_service
 
@@ -1099,13 +1099,12 @@ async def notify_admins_about_ticket_reply(
         safe_title = html.escape(title) if title else '—'
 
         notification_text = (
-            f'💬 <b>ОТВЕТ НА ТИКЕТ</b>\n\n'
-            f'🆔 <b>ID тикета:</b> <code>{ticket.id}</code>\n'
-            f'📝 <b>Заголовок:</b> {safe_title}\n'
-            f'👤 <b>Пользователь:</b> {full_name}\n'
-            f'🆔 <b>ID:</b> <code>{telegram_id_display}</code>\n'
-            f'📱 <b>Username:</b> {username_display}\n\n'
-            f'📩 <b>Сообщение:</b>\n{html.escape(reply_preview)}\n'
+            f'💬 <b>ОТВЕТ В ТИКЕТЕ #{ticket.id}</b>\n\n'
+            f'<b>Пользователь:</b> {full_name}\n'
+            f'<b>ID:</b> <code>{telegram_id_display}</code>\n'
+            f'<b>Username:</b> {username_display}\n'
+            f'<b>Тема:</b> {safe_title}\n\n'
+            f'<b>Сообщение:</b>\n<blockquote>{html.escape(reply_preview)}</blockquote>\n'
         )
 
         from app.services.maintenance_service import maintenance_service
