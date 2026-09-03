@@ -188,33 +188,32 @@ async def view_admin_ticket(
     username_value = ticket.user.username if ticket.user else None
     id_label = 'Telegram ID' if (ticket.user and ticket.user.telegram_id) else 'ID'
 
-    header = f'🎫 Тикет #{ticket.id}\n\n'
-    header += f'👤 Пользователь: {user_name}\n'
-    header += f'🆔 {id_label}: <code>{telegram_id_display}</code>\n'
+    header = f'<b>Тикет #{ticket.id}</b> · {ticket.status_emoji} {status_text}\n\n'
+    header += f'<b>Пользователь:</b> {user_name}\n'
+    header += f'<b>{id_label}:</b> <code>{telegram_id_display}</code>\n'
     if username_value:
         safe_username = html.escape(username_value)
-        header += f'📱 Username: @{safe_username}\n'
-    else:
-        header += '📱 Username: отсутствует\n'
-    header += f'📝 Заголовок: {html.escape(ticket.title)}\n'
-    header += f'📊 Статус: {ticket.status_emoji} {status_text}\n'
-    header += f'📅 Создан: {ticket.created_at.strftime("%d.%m.%Y %H:%M")}\n\n'
+        header += f'<b>Username:</b> @{safe_username}\n'
+    header += f'<b>Тема:</b> {html.escape(ticket.title)}\n'
+    header += f'<b>Создан:</b> {ticket.created_at.strftime("%d.%m.%Y %H:%M")}\n\n'
 
     if ticket.is_user_reply_blocked:
         if ticket.user_reply_block_permanent:
-            header += '🚫 Пользователь заблокирован навсегда\n\n'
+            header += '🚫 <i>Пользователь заблокирован навсегда</i>\n\n'
         elif ticket.user_reply_block_until:
-            header += f'⏳ Блок до: {ticket.user_reply_block_until.strftime("%d.%m.%Y %H:%M")}\n\n'
+            header += f'⏳ <i>Блок до: {ticket.user_reply_block_until.strftime("%d.%m.%Y %H:%M")}</i>\n\n'
 
     # Формируем блоки сообщений
     message_blocks: list[str] = []
     if ticket.messages:
-        message_blocks.append(f'💬 Сообщения ({len(ticket.messages)}):\n\n')
+        message_blocks.append(f'<b>Переписка ({len(ticket.messages)}):</b>\n\n')
         for msg in ticket.messages:
-            sender = '👤 Пользователь' if msg.is_user_message else '🛠️ Поддержка'
-            block = f'{sender} ({msg.created_at.strftime("%d.%m %H:%M")}):\n{html.escape(msg.message_text or "")}\n\n'
+            sender = '<b>Пользователь</b>' if msg.is_user_message else '<b>Поддержка</b>'
+            time_str = msg.created_at.strftime("%d.%m %H:%M")
+            body = html.escape(msg.message_text or "").strip()
             if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) == 'photo':
-                block += '📎 Вложение: фото\n\n'
+                body = f'{body}\n<i>📎 Вложение: фото</i>' if body else '<i>📎 Вложение: фото</i>'
+            block = f'{sender} <code>({time_str})</code>:\n<blockquote>{body}</blockquote>\n\n'
             message_blocks.append(block)
 
     # Разбиваем на страницы
@@ -771,44 +770,42 @@ async def handle_admin_block_duration_input(message: types.Message, state: FSMCo
                 TicketStatus.PENDING.value: texts.t('TICKET_STATUS_PENDING', 'В ожидании'),
             }.get(updated.status, updated.status)
             user_name = html.escape(updated.user.full_name) if updated.user else 'Unknown'
-            ticket_text = f'🎫 Тикет #{updated.id}\n\n'
-            ticket_text += f'👤 Пользователь: {user_name}\n'
-            ticket_text += f'📝 Заголовок: {html.escape(updated.title)}\n'
-            ticket_text += f'📊 Статус: {updated.status_emoji} {status_text}\n'
-            ticket_text += f'📅 Создан: {updated.created_at.strftime("%d.%m.%Y %H:%M")}\n'
-            ticket_text += f'🔄 Обновлен: {updated.updated_at.strftime("%d.%m.%Y %H:%M")}\n'
+            ticket_text = f'<b>Тикет #{updated.id}</b> · {updated.status_emoji} {status_text}\n\n'
+            ticket_text += f'<b>Пользователь:</b> {user_name}\n'
+            ticket_text += f'<b>Тема:</b> {html.escape(updated.title)}\n'
+            ticket_text += f'<b>Создан:</b> {updated.created_at.strftime("%d.%m.%Y %H:%M")}\n'
+            ticket_text += f'<b>Обновлен:</b> {updated.updated_at.strftime("%d.%m.%Y %H:%M")}\n'
             if updated.user and updated.user.telegram_id:
-                ticket_text += f'🆔 Telegram ID: <code>{updated.user.telegram_id}</code>\n'
+                ticket_text += f'<b>Telegram ID:</b> <code>{updated.user.telegram_id}</code>\n'
                 if updated.user.username:
                     safe_username = html.escape(updated.user.username)
-                    ticket_text += f'📱 Username: @{safe_username}\n'
+                    ticket_text += f'<b>Username:</b> @{safe_username}\n'
                     ticket_text += (
                         f'🔗 ЛС: <a href="tg://resolve?domain={safe_username}">'
                         f'tg://resolve?domain={safe_username}</a>\n'
                     )
                 else:
-                    ticket_text += '📱 Username: отсутствует\n'
                     chat_link = f'tg://user?id={int(updated.user.telegram_id)}'
                     ticket_text += f'🔗 Чат по ID: <a href="{chat_link}">{chat_link}</a>\n'
             elif updated.user:
                 # Email-only user
                 user_id_display = html.escape(str(updated.user.email or f'#{updated.user.id}'))
-                ticket_text += f'🆔 ID: <code>{user_id_display}</code>\n'
-                ticket_text += '📧 Тип: Email-пользователь\n'
+                ticket_text += f'<b>ID:</b> <code>{user_id_display}</code> (Email)\n'
             ticket_text += '\n'
             if updated.is_user_reply_blocked:
                 if updated.user_reply_block_permanent:
-                    ticket_text += '🚫 Пользователь заблокирован навсегда для ответов в этом тикете\n'
+                    ticket_text += '🚫 <i>Пользователь заблокирован навсегда</i>\n\n'
                 elif updated.user_reply_block_until:
-                    ticket_text += f'⏳ Блок до: {updated.user_reply_block_until.strftime("%d.%m.%Y %H:%M")}\n'
+                    ticket_text += f'⏳ <i>Блок до: {updated.user_reply_block_until.strftime("%d.%m.%Y %H:%M")}</i>\n\n'
             if updated.messages:
-                ticket_text += f'💬 Сообщения ({len(updated.messages)}):\n\n'
+                ticket_text += f'<b>Переписка ({len(updated.messages)}):</b>\n\n'
                 for msg in updated.messages:
-                    sender = '👤 Пользователь' if msg.is_user_message else '🛠️ Поддержка'
-                    ticket_text += f'{sender} ({msg.created_at.strftime("%d.%m %H:%M")}):\n'
-                    ticket_text += f'{html.escape(msg.message_text)}\n\n'
+                    sender = '<b>Пользователь</b>' if msg.is_user_message else '<b>Поддержка</b>'
+                    time_str = msg.created_at.strftime("%d.%m %H:%M")
+                    body = html.escape(msg.message_text or "").strip()
                     if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) == 'photo':
-                        ticket_text += '📎 Вложение: фото\n\n'
+                        body = f'{body}\n<i>📎 Вложение: фото</i>' if body else '<i>📎 Вложение: фото</i>'
+                    ticket_text += f'{sender} <code>({time_str})</code>:\n<blockquote>{body}</blockquote>\n\n'
 
             kb = get_admin_ticket_view_keyboard(
                 updated.id, updated.is_closed, db_user.language, is_user_blocked=updated.is_user_reply_blocked
@@ -1031,18 +1028,18 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
         # до обрезки нельзя: срез разорвал бы `&quot;` с тем же результатом.
         base_text = texts.t(
             'TICKET_REPLY_NOTIFICATION',
-            '🎫 Получен ответ по тикету #{ticket_id}\n\n{reply_preview}\n\nНажмите кнопку ниже, чтобы перейти к тикету:',
+            '💬 <b>Ответ по тикету #{ticket_id}</b>\n\n{reply_preview}',
         ).format(ticket_id=ticket.id, reply_preview=html.escape(preview_text(reply_text)))
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('VIEW_TICKET', '👁️ Посмотреть тикет'), callback_data=f'view_ticket_{ticket.id}'
+                        text=texts.t('VIEW_TICKET', '💬 Открыть тикет'), callback_data=f'view_ticket_{ticket.id}'
                     )
                 ],
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('CLOSE_NOTIFICATION', '❌ Закрыть уведомление'),
+                        text=texts.t('CLOSE_NOTIFICATION', '✕ Закрыть'),
                         callback_data=f'close_ticket_notification_{ticket.id}',
                     )
                 ],
@@ -1065,6 +1062,7 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
                     caption=caption,
                     reply_markup=keyboard,
                 )
+                logger.info('Ticket reply photo notification sent to user', ticket_id=ticket.id, chat_id=chat_id)
                 return
             except TelegramBadRequest as photo_error:
                 logger.error(
@@ -1075,6 +1073,24 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
                 )
             except Exception as e:
                 logger.error('Не удалось отправить фото-уведомление', error=e)
+
+        # Сначала пробуем отправить как Rich-уведомление (Bot API 10.3)
+        try:
+            from app.utils.rich_notify import try_send_rich_notification
+
+            rich_sent = await try_send_rich_notification(
+                bot=bot,
+                chat_id=chat_id,
+                text=base_text,
+                keyboard=keyboard,
+                with_logo=True,
+            )
+            if rich_sent:
+                logger.info('Ticket reply rich notification sent to user', ticket_id=ticket.id, chat_id=chat_id)
+                return
+        except Exception as rich_err:
+            logger.debug('Не удалось отправить rich-уведомление тикета, откат на классику', error=str(rich_err))
+
         # Фоллбек: текстовое уведомление
         await bot.send_message(
             chat_id=chat_id,
