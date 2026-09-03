@@ -1194,6 +1194,51 @@ async def _continue_registration_after_language(
     logger.info('📋 LANGUAGE: Правила отправлены после выбора языка')
 
 
+async def _handle_ticket_reply_deeplink(
+    message: types.Message,
+    state: FSMContext,
+    db: AsyncSession,
+    db_user: Any,
+    ticket_id: int,
+) -> bool:
+    """Обработка диплинка ответа на тикет /start reply_ticket_{id} из логов."""
+    from app.database.crud.ticket import TicketCRUD, TicketMessageCRUD
+    from app.keyboards.inline import get_admin_ticket_reply_cancel_keyboard
+    from app.states import AdminTicketStates
+
+    user_tg_id = message.from_user.id
+    if not (settings.is_admin(user_tg_id) or SupportSettingsService.is_moderator(user_tg_id)):
+        await message.answer('⛔ У вас нет прав для ответа на этот тикет.')
+        return True
+
+    ticket = await TicketCRUD.get_ticket_by_id(db, ticket_id, load_messages=True)
+    if not ticket:
+        await message.answer('⚠️ Тикет не найден.')
+        return True
+    if ticket.is_closed:
+        await message.answer(f'⚠️ Тикет #{ticket.id} уже закрыт.')
+        return True
+
+    texts = get_texts(db_user.language if db_user else settings.DEFAULT_LANGUAGE)
+    user_name = html.escape(ticket.user.full_name) if ticket.user else 'Пользователь'
+    last_msg = await TicketMessageCRUD.get_last_message(db, ticket.id)
+    last_text = html.escape((last_msg.message_text if last_msg else ticket.title) or '')
+
+    prompt_text = (
+        f'<tg-emoji emoji-id="5447317290783645061">💬</tg-emoji> <b>Тикет #{ticket.id}</b> · {ticket.status_emoji} {ticket.status}\n\n'
+        f'<b>Пользователь:</b> {user_name}\n'
+        f'<b>Тема:</b> {html.escape(ticket.title or "")}\n\n'
+        f'<b>Последнее сообщение:</b>\n'
+        f'<blockquote>{last_text}</blockquote>\n\n'
+        f'✏️ <b>Введите ваш ответ от поддержки:</b>'
+    )
+    cancel_kb = get_admin_ticket_reply_cancel_keyboard(db_user.language if db_user else settings.DEFAULT_LANGUAGE)
+    await state.update_data(ticket_id=ticket.id, reply_mode=True)
+    await state.set_state(AdminTicketStates.waiting_for_reply)
+    await message.answer(prompt_text, reply_markup=cancel_kb, parse_mode='HTML')
+    return True
+
+
 async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession, db_user=None):
     logger.info('🚀 START: Обработка /start от', from_user_id=message.from_user.id)
 
@@ -1377,11 +1422,6 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             return
     # Handle ticket reply deep link: /start reply_ticket_{id} (из лог-канала или группы)
     if start_parameter and (start_parameter.startswith('reply_ticket_') or start_parameter.startswith('admin_ticket_')):
-        from app.database.crud.ticket import TicketCRUD, TicketMessageCRUD
-        from app.keyboards.inline import get_admin_ticket_reply_cancel_keyboard
-        from app.services.support_settings_service import SupportSettingsService
-        from app.states import AdminTicketStates
-
         tid_str = start_parameter.removeprefix('reply_ticket_').removeprefix('admin_ticket_')
         try:
             target_ticket_id = int(tid_str)
@@ -1389,36 +1429,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             target_ticket_id = None
 
         if target_ticket_id:
-            user_tg_id = message.from_user.id
-            if settings.is_admin(user_tg_id) or SupportSettingsService.is_moderator(user_tg_id):
-                ticket = await TicketCRUD.get_ticket_by_id(db, target_ticket_id, load_messages=True)
-                if not ticket:
-                    await message.answer('⚠️ Тикет не найден.')
-                    return
-                if ticket.is_closed:
-                    await message.answer(f'⚠️ Тикет #{ticket.id} уже закрыт.')
-                    return
-
-                texts = get_texts(db_user.language if db_user else settings.DEFAULT_LANGUAGE)
-                user_name = html.escape(ticket.user.full_name) if ticket.user else 'Пользователь'
-                last_msg = await TicketMessageCRUD.get_last_message(db, ticket.id)
-                last_text = html.escape((last_msg.message_text if last_msg else ticket.title) or '')
-
-                prompt_text = (
-                    f'<tg-emoji emoji-id="5447317290783645061">💬</tg-emoji> <b>Тикет #{ticket.id}</b> · {ticket.status_emoji} {ticket.status}\n\n'
-                    f'<b>Пользователь:</b> {user_name}\n'
-                    f'<b>Тема:</b> {html.escape(ticket.title or "")}\n\n'
-                    f'<b>Последнее сообщение:</b>\n'
-                    f'<blockquote>{last_text}</blockquote>\n\n'
-                    f'✏️ <b>Введите ваш ответ от поддержки:</b>'
-                )
-                cancel_kb = get_admin_ticket_reply_cancel_keyboard(db_user.language if db_user else settings.DEFAULT_LANGUAGE)
-                await state.update_data(ticket_id=ticket.id, reply_mode=True)
-                await state.set_state(AdminTicketStates.waiting_for_reply)
-                await message.answer(prompt_text, reply_markup=cancel_kb, parse_mode='HTML')
-                return
-            else:
-                await message.answer('⛔ У вас нет прав для ответа на этот тикет.')
+            if await _handle_ticket_reply_deeplink(message, state, db, db_user, target_ticket_id):
                 return
         start_parameter = None
 
