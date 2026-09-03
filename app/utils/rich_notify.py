@@ -128,7 +128,7 @@ async def try_send_rich_notification(
     text: str,
     *,
     keyboard: InlineKeyboardMarkup | None = None,
-    with_logo: bool = True,
+    with_logo: bool = False,
     timeout: float | None = None,
     banner_name: str | None = None,
 ) -> bool:
@@ -151,14 +151,7 @@ async def try_send_rich_notification(
     if not settings.USER_NOTIFICATIONS_RICH_ENABLED or not is_rich_menu_enabled():
         return False
 
-    if not with_logo:
-        logo_url = ''
-    elif banner_name:
-        from app.services.banner_service import get_banner_url
-
-        logo_url = get_banner_url(banner_name) or _resolve_rich_logo_url()
-    else:
-        logo_url = _resolve_rich_logo_url()
+    logo_url = _resolve_rich_logo_url() if with_logo else ''
 
     rich_html = build_notification_rich_html(text, logo_url=logo_url)
     if rich_html is None or len(rich_html) > RICH_TEXT_LIMIT:

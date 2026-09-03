@@ -89,6 +89,9 @@ _MEDIA_FETCH_ERROR_MARKERS = (
     'photo_invalid',
     'image_process',
     'wrong type of the web page',
+    'photo_no_media_found',
+    'rich_message_photo',
+    'no_media_found',
 )
 
 # Теги, которые допускает sanitize_html, но не понимает rich-HTML: спойлерный
@@ -176,13 +179,14 @@ def _retry_without_logo(error: Exception) -> bool:
     в классику («рич не включается»), хотя достаточно было убрать картинку.
     Повтор ровно один — _mark_logo_unavailable_once взводит флаг до рестарта.
     """
+    if _is_media_fetch_error(error):
+        return _mark_logo_unavailable_once(error)
     if not _resolve_rich_logo_url():
         return False
-    if not _is_media_fetch_error(error):
-        logger.warning(
-            'Rich-меню отклонено незнакомой ошибкой — повторяем без логотипа',
-            error=str(error)[:200],
-        )
+    logger.warning(
+        'Rich-меню отклонено незнакомой ошибкой — повторяем без логотипа',
+        error=str(error)[:200],
+    )
     return _mark_logo_unavailable_once(error)
 
 
@@ -502,13 +506,7 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
     """Собирает rich-HTML главного меню (контент, без клавиатуры)."""
     blocks: list[str] = []
 
-    from app.services.banner_service import get_banner_url
-
-    user_subs = getattr(user, 'subscriptions', None)
-    has_active = any(s.is_active for s in user_subs) if user_subs else False
-    target_banner = 'main' if has_active else 'subscription_expired'
-    banner_url = get_banner_url(target_banner)
-    logo_url = banner_url or _resolve_rich_logo_url()
+    logo_url = _resolve_rich_logo_url()
     if logo_url:
         blocks.append(f'<img src="{html.escape(logo_url, quote=True)}"/>')
 
