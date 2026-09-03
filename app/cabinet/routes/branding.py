@@ -495,6 +495,9 @@ async def get_bot_logo():
 @router.get('/banner/{banner_name}')
 async def get_bot_banner(banner_name: str):
     """Get contextual bot banner (e.g. welcome, main, ticket, balance, referral)."""
+    if not re.match(r'^[a-zA-Z0-9_-]{1,64}$', banner_name):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid banner name')
+
     from app.services.banner_service import get_banner_path
 
     banner_path = get_banner_path(banner_name)

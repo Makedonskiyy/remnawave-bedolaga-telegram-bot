@@ -50,7 +50,10 @@ _ALIASES = {
     'partner': BANNER_REFERRAL,
 }
 
-_SUPPORTED_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp')
+import os
+import re
+
+_SUPPORTED_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.PNG', '.JPG', '.JPEG', '.WEBP')
 
 # Telegram limits
 _BANNER_MAX_DIMENSION = 1280
@@ -67,10 +70,12 @@ _current_banner_ctx: ContextVar[str | None] = ContextVar('current_banner_ctx', d
 
 
 def normalize_banner_name(name: str | None) -> str:
-    """Приводит имя баннера к каноническому виду."""
+    """Приводит имя баннера к каноническому виду с валидацией и очисткой от path traversal."""
     if not name:
         return BANNER_MAIN
-    clean = name.strip().lower()
+    clean = re.sub(r'[^a-zA-Z0-9_-]', '', str(name).strip().lower())[:64]
+    if not clean:
+        return BANNER_MAIN
     return _ALIASES.get(clean, clean)
 
 
@@ -105,6 +110,15 @@ def _get_banners_dirs() -> list[Path]:
     return candidates
 
 
+def _is_safe_child(child: Path, parent: Path) -> bool:
+    """Проверяет, что child находится строго внутри parent (защита от path traversal)."""
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except (ValueError, RuntimeError):
+        return False
+
+
 def get_banner_path(banner_name: str | None = None) -> Path | None:
     """Находит файл баннера на диске с фоллбэком на main или default logo."""
     target_name = normalize_banner_name(banner_name)
@@ -116,10 +130,10 @@ def get_banner_path(banner_name: str | None = None) -> Path | None:
             continue
         for ext in _SUPPORTED_EXTENSIONS:
             p1 = d / f'banner_{target_name}{ext}'
-            if p1.is_file():
+            if p1.is_file() and _is_safe_child(p1, d):
                 return p1
             p2 = d / f'{target_name}{ext}'
-            if p2.is_file():
+            if p2.is_file() and _is_safe_child(p2, d):
                 return p2
 
     # 2. Фоллбэк: если запрашивался не main, пробуем banner_main
@@ -129,7 +143,7 @@ def get_banner_path(banner_name: str | None = None) -> Path | None:
                 continue
             for ext in _SUPPORTED_EXTENSIONS:
                 p_main = d / f'banner_main{ext}'
-                if p_main.is_file():
+                if p_main.is_file() and _is_safe_child(p_main, d):
                     return p_main
 
     # 3. Фоллбэк на стандартный логотип бота (settings.LOGO_FILE)
@@ -170,7 +184,19 @@ def _prepare_banner_for_send(path: Path) -> Path:
             else:
                 resized = resized.convert('RGB')
             resized.thumbnail((_BANNER_MAX_DIMENSION, _BANNER_MAX_DIMENSION), Image.Resampling.LANCZOS)
-            resized.save(resized_path, format='PNG', optimize=True)
+
+            # Атомарная запись через временный файл для защиты от race condition
+            tmp_fd, tmp_path_str = tempfile.mkstemp(dir=tempfile.gettempdir(), suffix='.tmp')
+            os.close(tmp_fd)
+            tmp_path = Path(tmp_path_str)
+            try:
+                resized.save(tmp_path, format='PNG', optimize=True)
+                os.replace(tmp_path, resized_path)
+            except Exception:
+                if tmp_path.exists():
+                    tmp_path.unlink(missing_ok=True)
+                raise
+
             logger.info(
                 'Banner resized for Telegram',
                 src=str(path),

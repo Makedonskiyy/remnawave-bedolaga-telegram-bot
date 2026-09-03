@@ -364,8 +364,10 @@ class NotificationDeliveryService:
         # хотя это ожидаемая сетевая транзиент-ошибка.
         max_attempts = 3
         last_transient_error: Exception | None = None
+        from app.utils.message_patch import caption_exceeds_telegram_limit
+
         banner_photo = get_banner_media(target_banner) if settings.ENABLE_LOGO_MODE else None
-        can_send_photo = banner_photo is not None and len(message) <= 1024
+        can_send_photo = banner_photo is not None and not caption_exceeds_telegram_limit(message)
 
         for attempt in range(1, max_attempts + 1):
             try:

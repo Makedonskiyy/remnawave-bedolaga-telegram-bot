@@ -221,11 +221,11 @@ async def edit_or_answer_photo(
     # Retry logic для сетевых ошибок
     for attempt in range(MAX_RETRIES):
         try:
-            await callback.message.edit_media(
+            edit_res = await callback.message.edit_media(
                 InputMediaPhoto(media=media, caption=caption, parse_mode=(parse_mode or 'HTML')),
                 reply_markup=keyboard,
             )
-            _cache_logo_file_id(callback.message, target_banner)
+            _cache_logo_file_id(edit_res if isinstance(edit_res, types.Message) else callback.message, target_banner)
             return  # Успешно — выходим
         except TelegramNetworkError as net_error:
             if attempt < MAX_RETRIES - 1:

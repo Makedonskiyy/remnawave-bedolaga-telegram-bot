@@ -63,3 +63,20 @@ def test_banner_scope():
 def test_get_banner_media():
     media = get_banner_media(BANNER_MAIN)
     assert media is not None
+
+
+def test_banner_path_traversal_safety():
+    # Attempting directory traversal should be neutralized
+    assert normalize_banner_name('../../etc/passwd') == 'etcpasswd'
+    assert normalize_banner_name('..\\..\\windows\\win.ini') == 'windowswinini'
+    # Resolving path with malicious input should either return fallback or None, never escape
+    traversal_path = get_banner_path('../../../.env')
+    if traversal_path:
+        # If it returns fallback, it must be main or default logo
+        assert traversal_path.name in ('banner_main.png', 'vpn_logo.png')
+
+
+def test_banner_invalid_characters_sanitization():
+    assert normalize_banner_name('welcome!@#$%^&*()') == 'welcome'
+    assert normalize_banner_name('<script>alert(1)</script>') == 'scriptalert1script'
+
