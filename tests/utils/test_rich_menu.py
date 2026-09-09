@@ -245,7 +245,7 @@ async def test_builder_links_username_used_instead_of_name(monkeypatch):
 
     html_out = await rich_menu.build_main_menu_rich_html(user, DummyTexts(), AsyncMock())
 
-    assert html_out.startswith('<h4>👤 <a href="https://t.me/durov">@durov</a></h4>')
+    assert html_out.startswith('<h4><tg-emoji emoji-id="5474273338757001002">👤</tg-emoji> <a href="https://t.me/durov">@durov</a></h4>')
 
 
 async def test_builder_keeps_plain_name_when_user_has_one(monkeypatch):
@@ -261,7 +261,7 @@ async def test_builder_keeps_plain_name_when_user_has_one(monkeypatch):
 
     html_out = await rich_menu.build_main_menu_rich_html(user, DummyTexts(), AsyncMock())
 
-    assert html_out.startswith('<h4>👤 Егор &lt;script&gt;</h4>')
+    assert html_out.startswith('<h4><tg-emoji emoji-id="5474273338757001002">👤</tg-emoji> Егор &lt;script&gt;</h4>')
     assert 't.me/durov' not in html_out
 
 
@@ -280,7 +280,7 @@ async def test_builder_survives_user_without_username_attribute(monkeypatch):
 
     html_out = await rich_menu.build_main_menu_rich_html(user, DummyTexts(), AsyncMock())
 
-    assert html_out.startswith('<h4>👤 Егор &lt;script&gt;</h4>')
+    assert html_out.startswith('<h4><tg-emoji emoji-id="5474273338757001002">👤</tg-emoji> Егор &lt;script&gt;</h4>')
 
 
 async def test_builder_multi_tariff_table(monkeypatch):
@@ -775,7 +775,7 @@ async def test_usage_traffic_and_devices_displayed(monkeypatch):
 
     html_out = await rich_menu.build_main_menu_rich_html(user, DummyTexts(), AsyncMock())
 
-    assert '📊 Трафик: 12.5 ГБ / 100 ГБ' in html_out
+    assert '<tg-emoji emoji-id="5447431253445875826">📊</tg-emoji> Трафик: 12.5 ГБ / 100 ГБ' in html_out
     assert '📱 Устройства: 3' in html_out
 
 
@@ -795,7 +795,7 @@ async def test_usage_row_in_multi_tariff_table(monkeypatch):
 
     # Расход и кнопка подключения — в нижней colspan-строке ряда (узкая 4-я
     # колонка не влезала на мобильных: таблица уезжала за край экрана).
-    assert '<td colspan="3">📊 12.5 ГБ / 100 ГБ · 📱 3 · ' in html_out
+    assert '<td colspan="3"><tg-emoji emoji-id="5447431253445875826">📊</tg-emoji> 12.5 ГБ / 100 ГБ · 📱 3 · ' in html_out
     assert '<td colspan="4"' not in html_out
 
 
@@ -1001,7 +1001,7 @@ async def test_connect_link_for_active_subscription_in_table(monkeypatch):
 
     html_out = await rich_menu.build_main_menu_rich_html(_make_user(active), DummyTexts(), AsyncMock())
 
-    assert '<a href="https://sub.example.com/u/abc"><b>⚡ Подключить</b></a>' in html_out
+    assert '<a href="https://sub.example.com/u/abc"><b><tg-emoji emoji-id="5447290623331705359">⚡</tg-emoji> Подключить</b></a>' in html_out
 
 
 async def test_connect_link_hidden_when_subscription_link_hidden(monkeypatch):
@@ -1106,7 +1106,7 @@ async def test_multiple_subscriptions_collapse_into_details(monkeypatch):
 
     html_out = await rich_menu.build_main_menu_rich_html(_make_user(subs[0]), DummyTexts(), AsyncMock())
 
-    assert '<details><summary><b>📱 Подписки (2)</b></summary>' in html_out
+    assert '<details><summary><b><tg-emoji emoji-id="5454030530825726499">📱</tg-emoji> Подписки (2)</b></summary>' in html_out
     assert '<table bordered striped>' in html_out
     # Заголовок не дублируется: summary заменяет h6
     assert '<h6>' not in html_out
@@ -1127,7 +1127,7 @@ async def test_single_multi_tariff_subscription_stays_expanded(monkeypatch):
 
     html_out = await rich_menu.build_main_menu_rich_html(_make_user(sub), DummyTexts(), AsyncMock())
 
-    assert '<h6>📱 Подписки</h6>' in html_out
+    assert '<h6><tg-emoji emoji-id="5454030530825726499">📱</tg-emoji> Подписки</h6>' in html_out
     assert '<details><summary>' not in html_out
 
 
@@ -1146,7 +1146,7 @@ async def test_collapsible_disabled_keeps_plain_table(monkeypatch):
 
     html_out = await rich_menu.build_main_menu_rich_html(_make_user(subs[0]), DummyTexts(), AsyncMock())
 
-    assert '<h6>📱 Подписки</h6>' in html_out
+    assert '<h6><tg-emoji emoji-id="5454030530825726499">📱</tg-emoji> Подписки</h6>' in html_out
     assert '<details><summary>' not in html_out
 
 

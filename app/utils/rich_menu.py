@@ -346,7 +346,7 @@ def _connect_link(subscription, texts) -> str:
     url = _connect_url(subscription)
     if not url:
         return ''
-    label = _rich_text(texts.t('MAIN_MENU_RICH_CONNECT', '⚡ Подключить'))
+    label = _rich_text(texts.t('MAIN_MENU_RICH_CONNECT', '<tg-emoji emoji-id="5447290623331705359">⚡</tg-emoji> Подключить'))
     return f'<a href="{html.escape(url, quote=True)}"><b>{label}</b></a>'
 
 
@@ -419,7 +419,9 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
         # действий не влезает на мобильных (таблица уезжает за край экрана) —
         # colspan-строка видна всегда.
         if actual_status in {'active', 'trial', 'limited'}:
-            usage_parts = [f'📊 {html.escape(_traffic_usage_text(subscription, texts))}']
+            usage_parts = [
+                f'<tg-emoji emoji-id="5447431253445875826">📊</tg-emoji> {html.escape(_traffic_usage_text(subscription, texts))}'
+            ]
             device_limit = getattr(subscription, 'device_limit', None)
             if device_limit is not None:
                 # 0 — безлимит (HWID выключен), а не «нет устройств»: строку не прячем
@@ -478,7 +480,10 @@ async def _build_single_subscription_block(user: User, texts, db: AsyncSession) 
         lines.append(f'<code>{_progress_bar(seconds_left, total_seconds)}</code> {relative_line}')
 
     if actual_status in {'active', 'trial', 'limited'}:
-        traffic_template = texts.t('MAIN_MENU_RICH_TRAFFIC', '📊 Трафик: {traffic}')
+        traffic_template = texts.t(
+            'MAIN_MENU_RICH_TRAFFIC',
+            '<tg-emoji emoji-id="5447431253445875826">📊</tg-emoji> Трафик: {traffic}',
+        )
         lines.append(
             _rich_text(traffic_template).replace('{traffic}', html.escape(_traffic_usage_text(subscription, texts)))
         )
@@ -511,11 +516,14 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
     username = getattr(user, 'username', None)
     has_name = bool(getattr(user, 'first_name', None) or getattr(user, 'last_name', None))
     user_name = format_username_link(username) if username and not has_name else html.escape(user.full_name or '')
-    blocks.append(f'<h4>👤 {user_name}</h4>')
+    blocks.append(f'<h4><tg-emoji emoji-id="5474273338757001002">👤</tg-emoji> {user_name}</h4>')
     blocks.append('<hr/>')
 
     if settings.is_multi_tariff_enabled():
-        heading = texts.t('MAIN_MENU_RICH_SUBSCRIPTIONS_HEADING', '📱 Подписки')
+        heading = texts.t(
+            'MAIN_MENU_RICH_SUBSCRIPTIONS_HEADING',
+            '<tg-emoji emoji-id="5454030530825726499">📱</tg-emoji> Подписки',
+        )
         subscriptions = await get_all_subscriptions_by_user_id(db, user.id)
         # Неоплаченные черновики триала не показываем как существующую подписку
         subscriptions = [sub for sub in subscriptions if not getattr(sub, 'is_pending_trial', False)]
@@ -529,7 +537,10 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
             blocks.append(f'<h6>{_rich_text(heading)}</h6>')
             blocks.append(subscription_block)
     else:
-        heading = texts.t('MAIN_MENU_RICH_SUBSCRIPTION_HEADING', '📱 Подписка')
+        heading = texts.t(
+            'MAIN_MENU_RICH_SUBSCRIPTION_HEADING',
+            '<tg-emoji emoji-id="5454030530825726499">📱</tg-emoji> Подписка',
+        )
         blocks.append(f'<h6>{_rich_text(heading)}</h6>')
         blocks.append(await _build_single_subscription_block(user, texts, db))
 
@@ -537,7 +548,10 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
     if trial_link:
         blocks.append(f'<p>{trial_link}</p>')
 
-    balance_template = texts.t('MAIN_MENU_RICH_BALANCE', '💰 Баланс: {balance}')
+    balance_template = texts.t(
+        'MAIN_MENU_RICH_BALANCE',
+        '<tg-emoji emoji-id="5447285164428272967">💰</tg-emoji> Баланс: {balance}',
+    )
     balance_value = f'<b>{html.escape(settings.format_price(user.balance_kopeks))}</b>'
     blocks.append(f'<p>{_rich_text(balance_template).replace("{balance}", balance_value)}</p>')
 
