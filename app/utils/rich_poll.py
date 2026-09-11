@@ -231,7 +231,7 @@ def build_poll_completed_rich_html(
     blocks.append('<hr/>')
 
     thanks_text = texts.t('POLL_COMPLETED', '🙏 Спасибо за участие в опросе!')
-    blocks.append(f'<h4>{html.escape(thanks_text)}</h4>')
+    blocks.append(f'<h6>{html.escape(thanks_text)}</h6>')
 
     if reward_amount:
         reward_formatted = f'<b>{html.escape(settings.format_price(reward_amount))}</b>'
@@ -285,7 +285,7 @@ async def try_send_rich_poll_invitation(
     except TimeoutError:
         raise
     except TelegramForbiddenError:
-        return False
+        raise
     except (TelegramNotFound, TelegramBadRequest) as error:
         if logo_url and _is_media_fetch_error(error):
             _mark_logo_unavailable_once(error)
@@ -328,7 +328,7 @@ async def try_edit_rich_poll_message(
     if keyboard is not None:
         rich_html, reply_markup = _apply_inline_buttons(rich_html, keyboard, for_edit=True)
     else:
-        reply_markup = None
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=[])
 
     is_editable_as_rich = (
         not isinstance(message, InaccessibleMessage)
@@ -357,7 +357,7 @@ async def try_edit_rich_poll_message(
                 'chat_id': chat_id,
                 'rich_message': _input_rich_message(rich_html, language),
             }
-            if reply_markup is not None:
+            if reply_markup is not None and reply_markup.inline_keyboard:
                 kwargs['reply_markup'] = reply_markup
             await bot.send_rich_message(**kwargs)
         return True

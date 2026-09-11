@@ -74,7 +74,7 @@ async def _update_poll_message(
     try:
         await message.edit_text(
             text,
-            reply_markup=reply_markup,
+            reply_markup=reply_markup if reply_markup is not None else types.InlineKeyboardMarkup(inline_keyboard=[]),
             parse_mode=parse_mode,
             disable_web_page_preview=True,
         )
@@ -90,12 +90,14 @@ async def _update_poll_message(
         if "message can't be edited" in error_text or 'there is no text in the message to edit' in error_text:
             try:
                 await message.delete()
-                await message.answer(
-                    text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode,
-                    disable_web_page_preview=True,
-                )
+                kwargs: dict = {
+                    'text': text,
+                    'parse_mode': parse_mode,
+                    'disable_web_page_preview': True,
+                }
+                if reply_markup is not None and reply_markup.inline_keyboard:
+                    kwargs['reply_markup'] = reply_markup
+                await message.answer(**kwargs)
                 return True
             except Exception as recreate_err:
                 logger.warning('Не удалось пересоздать сообщение опроса', error=str(recreate_err))

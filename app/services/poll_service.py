@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import structlog
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -153,6 +153,9 @@ async def send_poll_to_users(
                             keyboard=keyboard,
                             language=user_snapshot.language,
                         )
+                    except TelegramForbiddenError:
+                        await new_db.rollback()
+                        return 'skipped'
                     except Exception as rich_err:
                         logger.debug('Ошибка отправки rich-опроса, переход на классику', error=str(rich_err))
                         rich_sent = False
@@ -169,9 +172,13 @@ async def send_poll_to_users(
 
                     await new_db.commit()
                     return 'sent'
-                except TelegramBadRequest as error:
+                except (TelegramForbiddenError, TelegramBadRequest) as error:
                     error_text = str(error).lower()
-                    if 'chat not found' in error_text or 'bot was blocked by the user' in error_text:
+                    if (
+                        isinstance(error, TelegramForbiddenError)
+                        or 'chat not found' in error_text
+                        or 'bot was blocked by the user' in error_text
+                    ):
                         await new_db.rollback()
                         return 'skipped'
                     # pragma: no cover - unexpected telegram error
