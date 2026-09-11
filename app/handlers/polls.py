@@ -15,6 +15,13 @@ from app.database.crud.poll import (
 from app.database.models import PollQuestion, User
 from app.localization.texts import get_texts
 from app.services.poll_service import get_next_question, get_question_option, reward_user_for_poll
+from app.utils.rich_menu import _resolve_rich_logo_url, is_rich_menu_enabled
+from app.utils.rich_poll import (
+    build_poll_completed_rich_html,
+    build_poll_question_rich_html,
+    try_edit_rich_poll_message,
+)
+from app.utils.validators import sanitize_html
 
 
 logger = structlog.get_logger(__name__)
@@ -40,7 +47,9 @@ async def _render_question_text(
         current=current_index,
         total=total,
     )
-    lines = [f'🗳️ <b>{html.escape(poll_title)}</b>', '', header, '', html.escape(question.text)]
+    clean_title = poll_title.strip()
+    title_display = clean_title if clean_title.startswith('🗳') else f'🗳️ {clean_title}'
+    lines = [f'<b>{html.escape(title_display)}</b>', '', header, '', sanitize_html(html.escape(question.text.strip()))]
     return '\n'.join(lines)
 
 
@@ -50,12 +59,24 @@ async def _update_poll_message(
     *,
     reply_markup: types.InlineKeyboardMarkup | None = None,
     parse_mode: str | None = 'HTML',
+    rich_html: str | None = None,
+    language: str | None = None,
 ) -> bool:
+    # 1. Пробуем обновить как rich-сообщение (Bot API 10.1+)
+    if is_rich_menu_enabled() and rich_html:
+        try:
+            if await try_edit_rich_poll_message(message, rich_html, reply_markup, language):
+                return True
+        except Exception as error:
+            logger.debug('Ошибка редактирования rich-опроса, переход на классику', error=str(error))
+
+    # 2. Классическое редактирование текста
     try:
         await message.edit_text(
             text,
             reply_markup=reply_markup,
             parse_mode=parse_mode,
+            disable_web_page_preview=True,
         )
         return True
     except TelegramBadRequest as error:
@@ -63,6 +84,22 @@ async def _update_poll_message(
         if 'message is not modified' in error_text:
             logger.debug('Опросное сообщение уже актуально, пропускаем обновление', error=error)
             return True
+
+        # Если сообщение нельзя отредактировать (например, смена типа сообщения),
+        # пересоздаём его через delete + send
+        if "message can't be edited" in error_text or 'there is no text in the message to edit' in error_text:
+            try:
+                await message.delete()
+                await message.answer(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                    disable_web_page_preview=True,
+                )
+                return True
+            except Exception as recreate_err:
+                logger.warning('Не удалось пересоздать сообщение опроса', error=str(recreate_err))
+                return False
 
         logger.warning('Не удалось обновить сообщение опроса', message_id=message.message_id, error=error)
     except Exception as error:  # pragma: no cover - defensive logging
@@ -129,11 +166,23 @@ async def handle_poll_start(
         len(response.poll.questions),
         db_user.language,
     )
+    keyboard = _build_options_keyboard(response.id, question)
+    logo_url = _resolve_rich_logo_url()
+    question_rich_html = build_poll_question_rich_html(
+        response.poll.title,
+        question,
+        index,
+        len(response.poll.questions),
+        db_user.language,
+        logo_url=logo_url,
+    )
 
     if not await _update_poll_message(
         callback.message,
         question_text,
-        reply_markup=_build_options_keyboard(response.id, question),
+        reply_markup=keyboard,
+        rich_html=question_rich_html,
+        language=db_user.language,
     ):
         await callback.answer(texts.t('POLL_ERROR', 'Не удалось показать вопрос.'), show_alert=True)
         return
@@ -204,10 +253,22 @@ async def handle_poll_answer(
             len(response.poll.questions),
             db_user.language,
         )
+        keyboard = _build_options_keyboard(response.id, next_question)
+        logo_url = _resolve_rich_logo_url()
+        question_rich_html = build_poll_question_rich_html(
+            response.poll.title,
+            next_question,
+            index,
+            len(response.poll.questions),
+            db_user.language,
+            logo_url=logo_url,
+        )
         if not await _update_poll_message(
             callback.message,
             question_text,
-            reply_markup=_build_options_keyboard(response.id, next_question),
+            reply_markup=keyboard,
+            rich_html=question_rich_html,
+            language=db_user.language,
         ):
             await callback.answer(texts.t('POLL_ERROR', 'Не удалось показать вопрос.'), show_alert=True)
             return
@@ -228,9 +289,19 @@ async def handle_poll_answer(
             ).format(amount=settings.format_price(reward_amount))
         )
 
+    logo_url = _resolve_rich_logo_url()
+    completed_rich_html = build_poll_completed_rich_html(
+        response.poll.title,
+        reward_amount,
+        db_user.language,
+        logo_url=logo_url,
+    )
+
     if not await _update_poll_message(
         callback.message,
         '\n\n'.join(thanks_lines),
+        rich_html=completed_rich_html,
+        language=db_user.language,
     ):
         await callback.answer(texts.t('POLL_COMPLETED', '🙏 Спасибо за участие в опросе!'))
         return

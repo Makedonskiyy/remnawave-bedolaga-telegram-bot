@@ -21,6 +21,8 @@ from app.database.models import (
     User,
 )
 from app.localization.texts import get_texts
+from app.utils.rich_poll import try_send_rich_poll_invitation
+from app.utils.validators import sanitize_html
 
 
 logger = structlog.get_logger(__name__)
@@ -29,9 +31,13 @@ logger = structlog.get_logger(__name__)
 def _build_poll_invitation_text(poll: Poll, language: str) -> str:
     texts = get_texts(language)
 
-    lines: list[str] = [f'🗳️ <b>{html.escape(poll.title)}</b>']
+    clean_title = poll.title.strip()
+    title_display = clean_title if clean_title.startswith('🗳') else f'🗳️ {clean_title}'
+    lines: list[str] = [f'<b>{html.escape(title_display)}</b>']
     if poll.description:
-        lines.append(html.escape(poll.description))
+        sanitized_desc = sanitize_html(html.escape(poll.description.strip()))
+        if sanitized_desc:
+            lines.append(sanitized_desc)
 
     if poll.reward_enabled and poll.reward_amount_kopeks > 0:
         reward_line = texts.t(
@@ -137,16 +143,29 @@ async def send_poll_to_users(
 
                     await new_db.flush()
 
-                    text = _build_poll_invitation_text(poll, user_snapshot.language)
                     keyboard = build_start_keyboard(response.id, user_snapshot.language)
+                    rich_sent = False
+                    try:
+                        rich_sent = await try_send_rich_poll_invitation(
+                            bot=bot,
+                            chat_id=user_snapshot.telegram_id,
+                            poll=poll,
+                            keyboard=keyboard,
+                            language=user_snapshot.language,
+                        )
+                    except Exception as rich_err:
+                        logger.debug('Ошибка отправки rich-опроса, переход на классику', error=str(rich_err))
+                        rich_sent = False
 
-                    await bot.send_message(
-                        chat_id=user_snapshot.telegram_id,
-                        text=text,
-                        reply_markup=keyboard,
-                        parse_mode='HTML',
-                        disable_web_page_preview=True,
-                    )
+                    if not rich_sent:
+                        text = _build_poll_invitation_text(poll, user_snapshot.language)
+                        await bot.send_message(
+                            chat_id=user_snapshot.telegram_id,
+                            text=text,
+                            reply_markup=keyboard,
+                            parse_mode='HTML',
+                            disable_web_page_preview=True,
+                        )
 
                     await new_db.commit()
                     return 'sent'
