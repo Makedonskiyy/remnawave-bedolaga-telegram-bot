@@ -176,6 +176,7 @@ async def main():
     version_check_task = None
     traffic_monitoring_task = None
     daily_subscription_task = None
+    funnel_worker_task = None
     polling_task = None
     web_api_server = None
     telegram_webhook_enabled = False
@@ -743,6 +744,21 @@ async def main():
                 stage.skip('Проверка версий отключена настройками')
 
         async with timeline.stage(
+            'Маркетинговые воронки',
+            '🎯',
+            success_message='Воркер маркетинговых воронок запущен',
+        ) as stage:
+            try:
+                from app.tasks.funnel_worker import start_funnel_worker
+
+                funnel_worker_task = asyncio.create_task(start_funnel_worker(bot))
+                stage.log('Интервал обработки: 60с')
+                stage.success('Воркер маркетинговых воронок активен')
+            except Exception as e:
+                stage.warning(f'Ошибка запуска воркера воронок: {e}')
+                logger.error('❌ Ошибка запуска воркера маркетинговых воронок', error=e)
+
+        async with timeline.stage(
             'Запуск polling',
             '🤖',
             success_message='Aiogram polling запущен',
@@ -890,6 +906,15 @@ async def main():
                     await auto_payment_verification_service.start()
                     auto_verification_active = auto_payment_verification_service.is_running()
 
+                if funnel_worker_task and funnel_worker_task.done():
+                    exception = funnel_worker_task.exception()
+                    if exception:
+                        logger.error('Воркер маркетинговых воронок завершился с ошибкой', error=exception)
+                        logger.info('🔄 Перезапуск воркера маркетинговых воронок...')
+                        from app.tasks.funnel_worker import start_funnel_worker
+
+                        funnel_worker_task = asyncio.create_task(start_funnel_worker(bot))
+
                 if polling_task and polling_task.done():
                     exception = polling_task.exception()
                     if exception:
@@ -961,6 +986,19 @@ async def main():
                 await daily_subscription_task
             except asyncio.CancelledError:
                 pass
+
+        if funnel_worker_task and not funnel_worker_task.done():
+            logger.info('ℹ️ Остановка воркера маркетинговых воронок...')
+            try:
+                from app.tasks.funnel_worker import stop_funnel_worker
+
+                stop_funnel_worker()
+                funnel_worker_task.cancel()
+                await funnel_worker_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error('Ошибка остановки воркера воронок', error=e)
 
         logger.info('ℹ️ Остановка сервиса отчетов...')
         try:
