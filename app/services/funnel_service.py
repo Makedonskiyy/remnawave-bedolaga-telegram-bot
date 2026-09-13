@@ -417,7 +417,7 @@ class FunnelService:
                 user.telegram_id,
                 text,
                 keyboard=keyboard,
-                with_logo=settings.ENABLE_LOGO_MODE,
+                with_logo=False,
             )
             if not sent_rich:
                 await self.bot.send_message(

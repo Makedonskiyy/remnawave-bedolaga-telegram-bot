@@ -112,6 +112,7 @@ class BroadcastConfig:
     # Персональная клавиатура на получателя (у промопредложений в callback_data зашит
     # id его оффера). Если задана — вытесняет selected_buttons/custom_buttons.
     keyboard_factory: Callable[[int], InlineKeyboardMarkup | None] | None = None
+    with_logo: bool = False
 
 
 @dataclass
@@ -507,7 +508,6 @@ class BroadcastService:
         # Медиа-ветка выше уходит как есть: rich-сообщение не несёт загруженный
         # по file_id файл. Текстовую рассылку показываем в том же виде, что меню и
         # остальные уведомления; при отказе ниже отрабатывает обычная отправка.
-        from app.config import settings
         from app.utils.rich_notify import try_send_rich_notification
 
         if await try_send_rich_notification(
@@ -515,7 +515,7 @@ class BroadcastService:
             telegram_id,
             config.message_text,
             keyboard=keyboard,
-            with_logo=settings.ENABLE_LOGO_MODE,
+            with_logo=config.with_logo,
         ):
             return
 

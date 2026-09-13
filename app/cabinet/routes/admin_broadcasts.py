@@ -473,6 +473,7 @@ async def create_broadcast(
         initiator_name=admin.username or f'Admin #{admin.id}',
         custom_buttons=[btn.model_dump() for btn in request.custom_buttons] if request.custom_buttons else None,
         category=request.category,
+        with_logo=request.with_logo,
     )
 
     # Start broadcast
@@ -703,6 +704,7 @@ async def create_combined_broadcast(
             initiator_name=admin_name,
             custom_buttons=[btn.model_dump() for btn in request.custom_buttons] if request.custom_buttons else None,
             category=request.category,
+            with_logo=request.with_logo,
         )
 
         await broadcast_service.start_broadcast(broadcast.id, telegram_config)

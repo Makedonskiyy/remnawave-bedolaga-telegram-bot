@@ -331,6 +331,7 @@ class TestBroadcastIntegration:
         await service._deliver_message(42, self._config(), None)
 
         rich.assert_awaited_once()
+        assert rich.await_args.kwargs['with_logo'] is False
         service._bot.send_message.assert_not_awaited()
 
     async def test_rich_refusal_falls_back_to_plain_send(self, monkeypatch):

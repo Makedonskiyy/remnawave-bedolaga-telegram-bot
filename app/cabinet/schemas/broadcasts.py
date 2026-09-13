@@ -126,6 +126,7 @@ class BroadcastCreateRequest(BaseModel):
     custom_buttons: list[CustomBroadcastButton] = Field(default_factory=list, max_length=10)
     media: BroadcastMediaRequest | None = None
     category: str = Field(default='system', pattern='^(system|news|promo)$')
+    with_logo: bool = False
 
 
 # ============ Response ============
@@ -225,6 +226,7 @@ class CombinedBroadcastCreateRequest(BaseModel):
 
     # Broadcast category for user notification preference filtering
     category: str = Field(default='system', pattern='^(system|news|promo)$')
+    with_logo: bool = False
 
     # Email-specific fields
     email_subject: str | None = Field(default=None, max_length=255)
