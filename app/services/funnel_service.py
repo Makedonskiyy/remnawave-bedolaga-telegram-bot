@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database.crud.discount_offer import upsert_discount_offer
 from app.database.crud.notification import notification_sent, record_notification
-from app.database.models import Subscription, SubscriptionStatus, User, UserStatus
+from app.database.models import Subscription, SubscriptionStatus, Transaction, TransactionType, User, UserStatus
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 from app.utils.rich_notify import try_send_rich_notification
 
@@ -35,6 +35,7 @@ class FunnelNotificationType:
     TRIAL_DISCOUNT_15 = 'funnel_trial_discount_15'
     DORMANT_14D = 'funnel_dormant_14d'
     REFERRAL_NPS_5D = 'funnel_referral_nps_5d'
+    FAILED_PAYMENT_1H = 'funnel_failed_payment_1h'
 
 
 class FunnelService:
@@ -71,6 +72,7 @@ class FunnelService:
         sent_count += await self._process_trial_funnel()
         sent_count += await self._process_dormant_funnel()
         sent_count += await self._process_referral_funnel()
+        sent_count += await self._process_failed_payment_funnel()
         return sent_count
 
     async def _process_trial_funnel(self) -> int:
@@ -403,6 +405,92 @@ class FunnelService:
                 if success:
                     await record_notification(self.db, user.id, sub.id, FunnelNotificationType.REFERRAL_NPS_5D)
                     sent += 1
+
+        return sent
+
+    async def _process_failed_payment_funnel(self) -> int:
+        """Напоминание о незавершённом пополнении баланса.
+
+        Срабатывает через 1 час после создания транзакции DEPOSIT с is_completed=False,
+        если с тех пор пользователь не совершил ни одного успешного DEPOSIT.
+        Окно поиска — от 1 до 24 часов назад (старше суток не напоминаем).
+        Для дедупликации используется последняя подписка пользователя.
+        Пользователи без подписок пропускаются (они вряд ли успели начать оплату).
+        """
+        now = datetime.now(UTC)
+        window_start = now - timedelta(hours=24)
+        window_end = now - timedelta(hours=1)
+
+        stmt = (
+            select(Transaction)
+            .options(selectinload(Transaction.user))
+            .where(
+                Transaction.type == TransactionType.DEPOSIT.value,
+                Transaction.is_completed == False,
+                Transaction.created_at >= window_start,
+                Transaction.created_at <= window_end,
+            )
+            .order_by(Transaction.created_at)
+        )
+        result = await self.db.execute(stmt)
+        transactions = result.scalars().all()
+
+        sent = 0
+        seen_user_ids: set[int] = set()
+
+        for tx in transactions:
+            user = tx.user
+            if not user or not user.telegram_id:
+                continue
+            if user.id in seen_user_ids:
+                continue
+
+            # Пропускаем, если пользователь уже успешно оплатил после этой транзакции
+            has_completed = await self.db.execute(
+                select(Transaction.id)
+                .where(
+                    Transaction.user_id == user.id,
+                    Transaction.type == TransactionType.DEPOSIT.value,
+                    Transaction.is_completed == True,
+                    Transaction.created_at > tx.created_at,
+                )
+                .limit(1)
+            )
+            if has_completed.scalar_one_or_none() is not None:
+                seen_user_ids.add(user.id)
+                continue
+
+            # Берём последнюю подписку для записи дедупа (NOT NULL FK constraint)
+            last_sub_row = await self.db.execute(
+                select(Subscription.id)
+                .where(Subscription.user_id == user.id)
+                .order_by(Subscription.created_at.desc())
+                .limit(1)
+            )
+            last_sub_id = last_sub_row.scalar_one_or_none()
+            if last_sub_id is None:
+                # У пользователя нет ни одной подписки — пропускаем
+                seen_user_ids.add(user.id)
+                continue
+
+            if not await notification_sent(self.db, user.id, last_sub_id, FunnelNotificationType.FAILED_PAYMENT_1H):
+                text = (
+                    '<b>Пополнение баланса не завершено</b>\n\n'
+                    'Похоже, платёж не прошёл до конца. Попробуйте повторить пополнение '
+                    'или напишите нам в поддержку, мы разберёмся и поможем.'
+                )
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [build_miniapp_or_callback_button(text='Пополнить баланс', callback_data='menu_balance', cabinet_path='/balance/top-up')],
+                        [build_miniapp_or_callback_button(text='Поддержка', callback_data='menu_support', cabinet_path='/support')],
+                    ]
+                )
+                success = await self._send_notification(user, text, keyboard)
+                if success:
+                    await record_notification(self.db, user.id, last_sub_id, FunnelNotificationType.FAILED_PAYMENT_1H)
+                    sent += 1
+
+            seen_user_ids.add(user.id)
 
         return sent
 

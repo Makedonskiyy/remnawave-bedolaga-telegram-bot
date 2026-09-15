@@ -344,10 +344,118 @@ async def test_process_pending_actions_full(mock_db: AsyncMock, mock_bot: AsyncM
     service = FunnelService(mock_db, mock_bot)
     with patch.object(service, '_process_trial_funnel', new_callable=AsyncMock) as m_trial, \
          patch.object(service, '_process_dormant_funnel', new_callable=AsyncMock) as m_dormant, \
-         patch.object(service, '_process_referral_funnel', new_callable=AsyncMock) as m_referral:
+         patch.object(service, '_process_referral_funnel', new_callable=AsyncMock) as m_referral, \
+         patch.object(service, '_process_failed_payment_funnel', new_callable=AsyncMock) as m_failed:
         m_trial.return_value = 2
         m_dormant.return_value = 1
         m_referral.return_value = 3
+        m_failed.return_value = 1
 
         total = await service.process_pending_actions()
-        assert total == 6
+        assert total == 7
+        m_failed.assert_awaited_once()
+
+
+def _make_tx_result(tx_list):
+    """Helper: make a mock result returning a list of Transaction objects."""
+    result = MagicMock()
+    scalars_mock = MagicMock()
+    scalars_mock.all.return_value = tx_list
+    result.scalars.return_value = scalars_mock
+    return result
+
+
+def _make_scalar_result(value):
+    """Helper: make a mock result returning a scalar_one_or_none value."""
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = value
+    return result
+
+
+@pytest.mark.asyncio
+async def test_failed_payment_sends_notification(mock_db: AsyncMock, mock_bot: AsyncMock) -> None:
+    """Notification sent when user has an incomplete DEPOSIT and a subscription."""
+    from app.database.models import Transaction, TransactionType
+
+    now = datetime.now(UTC)
+    user = User(id=5, telegram_id=99999, status=UserStatus.ACTIVE.value)
+    tx = Transaction(
+        id=1,
+        user_id=5,
+        type=TransactionType.DEPOSIT.value,
+        amount_kopeks=50000,
+        is_completed=False,
+        created_at=now - timedelta(hours=2),
+    )
+    tx.user = user
+
+    call_count = 0
+
+    async def fake_execute(stmt):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Main query: list of incomplete DEPOSIT transactions
+            return _make_tx_result([tx])
+        elif call_count == 2:
+            # Check for completed DEPOSIT after this tx: none
+            return _make_scalar_result(None)
+        elif call_count == 3:
+            # Last subscription id
+            return _make_scalar_result(42)
+        elif call_count == 4:
+            # notification_sent check: not sent yet
+            return MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
+        return MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
+
+    mock_db.execute = fake_execute
+
+    service = FunnelService(mock_db, mock_bot)
+
+    with patch('app.services.funnel_service.try_send_rich_notification', new_callable=AsyncMock) as mock_rich:
+        mock_rich.return_value = True
+        count = await service._process_failed_payment_funnel()
+
+    assert count == 1
+    mock_rich.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_payment_skipped_when_completed_later(mock_db: AsyncMock, mock_bot: AsyncMock) -> None:
+    """No notification when user already completed a deposit after the failed one."""
+    from app.database.models import Transaction, TransactionType
+
+    now = datetime.now(UTC)
+    user = User(id=6, telegram_id=88888, status=UserStatus.ACTIVE.value)
+    tx = Transaction(
+        id=2,
+        user_id=6,
+        type=TransactionType.DEPOSIT.value,
+        amount_kopeks=50000,
+        is_completed=False,
+        created_at=now - timedelta(hours=3),
+    )
+    tx.user = user
+
+    call_count = 0
+
+    async def fake_execute(stmt):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _make_tx_result([tx])
+        elif call_count == 2:
+            # User completed another deposit afterwards
+            return _make_scalar_result(99)
+        return _make_scalar_result(None)
+
+    mock_db.execute = fake_execute
+
+    service = FunnelService(mock_db, mock_bot)
+
+    with patch('app.services.funnel_service.try_send_rich_notification', new_callable=AsyncMock) as mock_rich:
+        mock_rich.return_value = True
+        count = await service._process_failed_payment_funnel()
+
+    assert count == 0
+    mock_rich.assert_not_awaited()
