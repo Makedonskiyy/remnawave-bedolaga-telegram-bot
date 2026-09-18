@@ -261,7 +261,7 @@ class NotificationDeliveryService:
         from app.utils.rich_notify import try_send_rich_notification
 
         if await try_send_rich_notification(
-            bot, user.telegram_id, message, keyboard=markup, with_logo=settings.ENABLE_LOGO_MODE
+            bot, user.telegram_id, message, keyboard=markup, with_logo=False
         ):
             return True
 

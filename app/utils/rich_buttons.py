@@ -24,6 +24,8 @@ import html
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.utils.miniapp_buttons import strip_leading_emoji
+
 
 # InputRichBlockButtons: «List of 1-8 buttons to send». Более длинный ряд сервер
 # отвергнет, поэтому режем сами — иначе одна широкая строка меню уронила бы всё
@@ -45,11 +47,14 @@ def _button_text_html(button: InlineKeyboardButton) -> str:
 
     У ``RichMessageButton`` нет ``icon_custom_emoji_id``, но текст кнопки —
     это RichText, в который ``RichTextCustomEmoji`` входит. Так иконка не теряется.
+    Если icon_custom_emoji_id не задан, кнопка остаётся чистой без эмодзи.
     """
-    text = html.escape(button.text or '')
+    raw_text = button.text or ''
+    clean_text = strip_leading_emoji(raw_text)
+    escaped_text = html.escape(clean_text)
     if button.icon_custom_emoji_id:
-        return f'<tg-emoji emoji-id="{_attr(button.icon_custom_emoji_id)}"></tg-emoji>{text}'
-    return text
+        return f'<tg-emoji emoji-id="{_attr(button.icon_custom_emoji_id)}"></tg-emoji>{escaped_text}'
+    return escaped_text
 
 
 def _render_button(button: InlineKeyboardButton, *, allow_web_app: bool) -> str | None:

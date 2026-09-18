@@ -218,23 +218,24 @@ def build_miniapp_or_callback_button(
                 section = CALLBACK_TO_SECTION.get(lookup_key)
                 section_cfg = get_cached_button_styles().get(section or '', {}) if section else {}
 
-                # Style chain: explicit param > per-section DB > global config > hardcoded default
-                # 'default' in per-section config means "no color" — do not fall through.
+                # Style chain: explicit param > per-section DB (if not 'default') > global config.
+                # Do not auto-color buttons by default (no hardcoded primary/success).
                 if style:
                     resolved_style = _resolve_style(style)
-                elif section_cfg.get('style'):
+                elif section_cfg.get('style') and section_cfg.get('style') != 'default':
                     resolved_style = _resolve_style(section_cfg['style'])
+                elif (settings.CABINET_BUTTON_STYLE or '').strip():
+                    resolved_style = _resolve_style(settings.CABINET_BUTTON_STYLE.strip())
                 else:
-                    resolved_style = _resolve_style((settings.CABINET_BUTTON_STYLE or '').strip()) or _resolve_style(
-                        CALLBACK_TO_CABINET_STYLE.get(lookup_key)
-                    )
+                    resolved_style = None
 
                 # Emoji chain: explicit param > per-section DB
                 resolved_emoji = icon_custom_emoji_id or section_cfg.get('icon_custom_emoji_id') or None
 
-                # Если есть кастом emoji — стрипаем ведущий юникод-эмодзи из текста,
-                # иначе у юзера будут две иконки слева (custom + default).
-                final_text = strip_leading_emoji(text) if resolved_emoji else text
+                # Всегда очищаем ведущий юникод-эмодзи:
+                # - если id emoji не задан -> дефолтная кнопка без эмодзи вовсе;
+                # - если id emoji задан -> выводится только указанный custom emoji.
+                final_text = strip_leading_emoji(text)
 
                 return InlineKeyboardButton(
                     text=final_text,
@@ -243,7 +244,14 @@ def build_miniapp_or_callback_button(
                     icon_custom_emoji_id=resolved_emoji or None,
                 )
 
-    return InlineKeyboardButton(text=text, callback_data=callback_data)
+    resolved_emoji = icon_custom_emoji_id or None
+    final_text = strip_leading_emoji(text)
+    return InlineKeyboardButton(
+        text=final_text,
+        callback_data=callback_data,
+        style=_resolve_style(style) if style else None,
+        icon_custom_emoji_id=resolved_emoji or None,
+    )
 
 
 SUBSCRIPTION_EXTEND_CALLBACK = 'subscription_extend'

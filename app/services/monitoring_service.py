@@ -272,7 +272,7 @@ class MonitoringService:
                 chat_id,
                 text,
                 keyboard=reply_markup,
-                with_logo=settings.ENABLE_LOGO_MODE,
+                with_logo=False,
                 timeout=settings.MONITORING_NOTIFICATION_SEND_TIMEOUT,
             )
         except TimeoutError:
@@ -284,45 +284,6 @@ class MonitoringService:
             return None
         if sent_rich:
             return None
-
-        if (
-            settings.ENABLE_LOGO_MODE
-            and await asyncio.to_thread(LOGO_PATH.exists)
-            and not caption_exceeds_telegram_limit(text)
-        ):
-            try:
-                from app.utils.message_patch import _cache_logo_file_id, get_logo_media
-
-                # Жёсткий per-send таймаут: без него залипший send_photo (на медленном
-                # канале это особенно вероятно на ПЕРВОЙ отправке цикла, где грузится
-                # файл логотипа ~700КБ — file_id кешируется только после успеха) держит
-                # await до session timeout (60s) на каждого получателя и блокирует хвост
-                # цикла мониторинга. На TimeoutError пропускаем получателя.
-                result = await asyncio.wait_for(
-                    self.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=get_logo_media(),
-                        caption=text,
-                        reply_markup=reply_markup,
-                        parse_mode=parse_mode,
-                    ),
-                    timeout=settings.MONITORING_NOTIFICATION_SEND_TIMEOUT,
-                )
-                _cache_logo_file_id(result)
-                return result
-            except TimeoutError:
-                logger.warning(
-                    'send_photo завис дольше таймаута — пропускаем получателя, цикл продолжается',
-                    chat_id=chat_id,
-                    timeout=settings.MONITORING_NOTIFICATION_SEND_TIMEOUT,
-                )
-                return None
-            except TelegramBadRequest as exc:
-                logger.warning(
-                    'Не удалось отправить сообщение с логотипом, отправляем текстовое сообщение',
-                    chat_id=chat_id,
-                    exc=exc,
-                )
 
         try:
             return await asyncio.wait_for(
@@ -1976,20 +1937,20 @@ class MonitoringService:
                     tariff_label = f' «{tariff_name}»'
                 elif hasattr(subscription, 'tariff') and subscription.tariff:
                     tariff_label = f' «{subscription.tariff.name}»'
-            message = f"""
-⛔ <b>Подписка{tariff_label} истекла</b>
+            message = f"""⛔ <b>Подписка{tariff_label} истекла</b>
 
-Ваша подписка истекла. Для восстановления доступа продлите подписку.
+Ваша подписка <u>завершила своё действие</u>.
+Для восстановления доступа, пожалуйста, <b>продлите подписку</b>.
 
-🔧 Доступ к серверам заблокирован до продления.
-"""
+• <i>Статус подключения: временно приостановлено</i>
+• <i>Все ваши настройки, устройства и конфигурации: <code>сохранены</code></i>"""
 
             from aiogram.types import InlineKeyboardMarkup
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [build_subscription_extend_button('💎 Продлить подписку', subscription.id)],
-                    [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='balance_topup')],
+                    [build_subscription_extend_button('Продлить подписку', subscription.id)],
+                    [build_miniapp_or_callback_button(text='Пополнить баланс', callback_data='balance_topup')],
                 ]
             )
 
@@ -2396,8 +2357,10 @@ class MonitoringService:
                     'SUBSCRIPTION_EXPIRED_SECOND_WAVE',
                     (
                         '🔥 <b>Скидка {percent}% на продление{tariff_label}</b>\n\n'
-                        'Активируйте предложение, чтобы получить дополнительную скидку. '
-                        'Она суммируется с вашей промогруппой и действует до {expires_at}.'
+                        'Активируйте предложение, чтобы получить <u>персональную скидку</u>.\n\n'
+                        '• Ваша скидка: <b>-{percent}%</b> <i>(суммируется с промогруппой)</i>\n'
+                        '• Срок действия: <code>до {expires_at}</code>\n'
+                        '• Выгода: <code>скидка -{percent}% применится при оплате</code>'
                     ),
                 )
             else:
@@ -2405,8 +2368,10 @@ class MonitoringService:
                     'SUBSCRIPTION_EXPIRED_THIRD_WAVE',
                     (
                         '🎁 <b>Индивидуальная скидка {percent}%{tariff_label}</b>\n\n'
-                        'Прошло {trigger_days} дней без подписки — возвращайтесь и активируйте дополнительную скидку. '
-                        'Она суммируется с промогруппой и действует до {expires_at}.'
+                        'Прошло {trigger_days} дн. без подписки. Возвращайтесь и активируйте <u>дополнительную скидку</u>.\n\n'
+                        '• Специальная скидка: <b>-{percent}%</b> <i>(суммируется с промогруппой)</i>\n'
+                        '• Срок действия: <code>до {expires_at}</code>\n'
+                        '• Выгода: <code>скидка -{percent}% на любой тариф</code>'
                     ),
                 )
 
@@ -2417,30 +2382,30 @@ class MonitoringService:
                 tariff_label=tariff_label,
             )
 
-            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+            from aiogram.types import InlineKeyboardMarkup
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         build_miniapp_or_callback_button(
-                            text='🎁 Получить скидку', callback_data=f'claim_discount_{offer_id}'
+                            text='Получить скидку', callback_data=f'claim_discount_{offer_id}'
                         )
                     ],
                     [
                         build_subscription_extend_button(
-                            texts.t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
+                            texts.t('SUBSCRIPTION_EXTEND', 'Продлить подписку'),
                             subscription.id,
                         )
                     ],
                     [
                         build_miniapp_or_callback_button(
-                            text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'),
+                            text=texts.t('BALANCE_TOPUP', 'Пополнить баланс'),
                             callback_data='balance_topup',
                         )
                     ],
                     [
-                        InlineKeyboardButton(
-                            text=texts.t('SUPPORT_BUTTON', '🆘 Поддержка'), callback_data='menu_support'
+                        build_miniapp_or_callback_button(
+                            text=texts.t('SUPPORT_BUTTON', 'Поддержка'), callback_data='menu_support'
                         )
                     ],
                 ]

@@ -165,11 +165,41 @@ def test_text_and_attributes_are_escaped() -> None:
 
     html = render_keyboard_as_rich_html(_kb([button]))
 
-    assert '&lt;b&gt;' in html
-    assert 'https://e.com/?a=1&amp;b=2' in html
-    assert '<b>' not in html
+    assert '&lt;b&gt;жирный&lt;/b&gt; &amp; &quot;кавычки&quot;' in html
+    assert 'url="https://e.com/?a=1&amp;b=2"' in html
+
+
+def test_button_text_strips_leading_emoji_when_no_custom_id() -> None:
+    """Если icon_custom_emoji_id не указан — кнопка дефолтная без эмодзи вовсе."""
+    button = InlineKeyboardButton(text='💎 Продлить подписку', callback_data='renew')
+    html = render_keyboard_as_rich_html(_kb([button]))
+
+    assert '💎' not in html
+    assert '>Продлить подписку</tg-button>' in html
+    assert 'style=' not in html
+
+
+def test_button_with_custom_emoji_and_leading_emoji_only_keeps_custom() -> None:
+    """Если icon_custom_emoji_id указан — ведущий эмодзи вычищается, остаётся только кастомный."""
+    button = InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='topup', icon_custom_emoji_id='99999')
+    html = render_keyboard_as_rich_html(_kb([button]))
+
+    assert '💳' not in html
+    assert '<tg-emoji emoji-id="99999"></tg-emoji>Пополнить баланс' in html
+
+
+def test_miniapp_button_defaults_to_no_color_and_no_emoji() -> None:
+    """build_miniapp_or_callback_button делает кнопку без цвета и без эмодзи по умолчанию."""
+    from app.utils.miniapp_buttons import build_miniapp_or_callback_button
+
+    btn = build_miniapp_or_callback_button('🎁 Получить скидку', callback_data='claim_discount_1')
+    assert '🎁' not in btn.text
+    assert btn.text == 'Получить скидку'
+    assert btn.style is None
+    assert btn.icon_custom_emoji_id is None
 
 
 @pytest.mark.parametrize('keyboard', [None, InlineKeyboardMarkup(inline_keyboard=[])])
 def test_nothing_to_move_returns_none(keyboard) -> None:
     assert render_keyboard_as_rich_html(keyboard) is None
+
