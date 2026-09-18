@@ -16,6 +16,7 @@ from app.database.crud.campaign import get_campaign_registration_by_user
 from app.database.crud.subscription import (
     extend_subscription,
 )
+from app.database.crud.subscription_segments import segment_condition, subscription_segment
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.user import (
     add_user_balance,
@@ -68,12 +69,14 @@ from app.services.panel_sync import (
     PanelAccountOwnedByAnotherUser,
     find_foreign_panel_owner,
     is_subscription_live,
+    link_subscription_panel_identity,
     project_onto_subscription,
     read_panel_user,
 )
 from app.services.panel_sync.fields import narrow_push_fields
 from app.services.permission_service import PermissionService
 from app.services.user_action_log_service import CLICK_PREFIX, SCREEN_PREFIX
+from app.utils.subscription_time import local_days_until
 from app.utils.subscription_utils import coerce_panel_device_limit
 from app.utils.timezone import local_day_start, panel_datetime_to_utc
 
@@ -106,6 +109,7 @@ from ..schemas.users import (
     SendUserMessageRequest,
     SendUserMessageResponse,
     SortByEnum,
+    SortOrderEnum,
     SubscriptionListItem,
     SyncFromPanelRequest,
     SyncFromPanelResponse,
@@ -170,7 +174,58 @@ async def _get_owned_subscription_or_404(db: AsyncSession, subscription_id: int,
     return subscription
 
 
-def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListItem:
+#: Что именно строка списка обязана показать — зависит от открытой выборки.
+HIGHLIGHT_TRAFFIC = 'traffic'
+HIGHLIGHT_STATUS_PREFIX = 'status:'
+
+
+def _soonest(subscriptions: list[Subscription]) -> Subscription:
+    """Ближайшая к окончанию — по ней человек и оценивает, что у него кончается."""
+    return min(subscriptions, key=lambda s: (s.end_date is None, s.end_date))
+
+
+def _row_subscription(subs: list[Subscription], highlight: str | None) -> Subscription | None:
+    """Подписка, которую показывает строка списка.
+
+    По умолчанию — ближайшая к окончанию среди живых: так строка совпадает с
+    сортировкой по окончанию (при мультитарифе иначе выходило расхождение —
+    список отсортирован по одной дате, а в строке показана другая).
+
+    Но если выборка нашла человека по конкретной подписке, показать надо именно
+    её. В «Трафике на исходе» строка показывала полосу «0 / 600 ГБ» у человека,
+    который попал туда из-за другого тарифа, забитого под завязку, — и выборка
+    выглядела сломанной.
+    """
+    if not subs:
+        return None
+
+    if highlight == HIGHLIGHT_TRAFFIC:
+        with_limit = [s for s in subs if (s.traffic_limit_gb or 0) > 0]
+        if with_limit:
+            return max(with_limit, key=lambda s: (s.traffic_used_gb or 0.0) / s.traffic_limit_gb)
+    elif highlight and highlight.startswith(HIGHLIGHT_STATUS_PREFIX):
+        wanted = highlight.removeprefix(HIGHLIGHT_STATUS_PREFIX)
+        same_status = [s for s in subs if subscription_segment(s) == wanted]
+        if same_status:
+            return _soonest(same_status)
+
+    live = [s for s in subs if s.is_active]
+    return _soonest(live) if live else subs[0]
+
+
+def _grace_until(subscription: Subscription | None) -> datetime | None:
+    """До какого числа открыт временный доступ; ``None`` — обычная подписка.
+
+    Пока грейс-сессия открыта, в панели стоит её оверлей: человек с истёкшей
+    подпиской продолжает пользоваться VPN. По списку это было не отличить от
+    просто истёкшей — админ видел «истекла» и не понимал, почему человек в сети.
+    """
+    if subscription is None or not subscription.grace_session_open:
+        return None
+    return subscription.grace_overlay_expire_at
+
+
+def _build_user_list_item(user: User, spending_stats: dict = None, highlight: str | None = None) -> UserListItem:
     """Build UserListItem from User model."""
     stats = spending_stats or {}
     user_stats = stats.get(user.id, {'total_spent': 0, 'purchase_count': 0})
@@ -187,18 +242,12 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
     days_remaining = 0
 
     subs = getattr(user, 'subscriptions', None) or []
-    # Среди активных берём ту, что кончается РАНЬШЕ всех, а не самую свежую по
-    # дате создания (связь отсортирована по created_at). При мультитарифе иначе
-    # выходило расхождение: список отсортирован по ближайшему окончанию, а в
-    # строке показана дата другой подписки — сортировка выглядела сломанной.
-    _active_subs = [s for s in subs if s.is_active]
-    if _active_subs:
-        subscription = min(_active_subs, key=lambda s: (s.end_date is None, s.end_date))
-    else:
-        subscription = subs[0] if subs else None
+    subscription = _row_subscription(subs, highlight)
     if subscription:
         has_subscription = True
-        subscription_status = subscription.status
+        # Сегмент, а не сырой статус: чип строки показывает «Триал N дн.» и «истекла»
+        # ровно по тем же правилам, по которым человек попал в выборку.
+        subscription_status = subscription_segment(subscription)
         subscription_is_trial = subscription.is_trial
         subscription_end_date = subscription.end_date
         tariff_id = subscription.tariff_id
@@ -207,8 +256,7 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
         traffic_limit_gb = subscription.traffic_limit_gb or 0
         device_limit = subscription.device_limit or 0
         if subscription.end_date:
-            delta = subscription.end_date - datetime.now(UTC)
-            days_remaining = max(0, delta.days)
+            days_remaining = local_days_until(subscription.end_date)
 
     # Build per-subscription list (always — bulk actions need it for any mode)
     sub_list: list[SubscriptionListItem] = []
@@ -230,6 +278,7 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
                     traffic_used_gb=s.traffic_used_gb or 0.0,
                     traffic_limit_gb=s.traffic_limit_gb or 0,
                     device_limit=s.device_limit or 0,
+                    grace_until=_grace_until(s),
                 )
             )
 
@@ -255,6 +304,7 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
         traffic_limit_gb=traffic_limit_gb,
         device_limit=device_limit,
         days_remaining=days_remaining,
+        grace_until=_grace_until(subscription),
         subscriptions=sub_list,
         promo_group_id=user.promo_group_id,
         promo_group_name=user.promo_group.name if user.promo_group else None,
@@ -272,8 +322,7 @@ def _build_subscription_info(subscription: Subscription, tariff_name: str | None
     is_active = False
 
     if subscription.end_date:
-        delta = subscription.end_date - datetime.now(UTC)
-        days_remaining = max(0, delta.days)
+        days_remaining = local_days_until(subscription.end_date)
         is_active = subscription.status == SubscriptionStatus.ACTIVE.value and subscription.end_date > datetime.now(UTC)
 
     return UserSubscriptionInfo(
@@ -290,6 +339,7 @@ def _build_subscription_info(subscription: Subscription, tariff_name: str | None
         autopay_enabled=subscription.autopay_enabled,
         is_active=is_active,
         days_remaining=days_remaining,
+        grace_until=_grace_until(subscription),
     )
 
 
@@ -313,8 +363,7 @@ async def _build_subscription_info_async(db: AsyncSession, subscription: Subscri
 
     traffic_purchase_items = []
     for p in purchases:
-        delta = p.expires_at - now
-        days_remaining = max(0, delta.days)
+        days_remaining = local_days_until(p.expires_at, now)
         is_expired = now >= p.expires_at
         traffic_purchase_items.append(
             TrafficPurchaseItem(
@@ -456,7 +505,9 @@ async def list_users(
     purchase_count: int | None = Query(None, ge=0, le=0),
     traffic_used_percent_min: int | None = Query(None, ge=1, le=100),
     online: bool | None = Query(None),
+    in_grace: bool | None = Query(None),
     sort_by: SortByEnum = Query(SortByEnum.CREATED_AT),
+    sort_order: SortOrderEnum | None = Query(None),
     admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -471,10 +522,12 @@ async def list_users(
     - **expires_within_days**: Active subscription ends within N days (daily tariffs excluded)
     - **active_within_minutes**: Last activity in the bot or cabinet within N minutes
     - **online**: Only users connected to the VPN right now (by the panel's onlineAt)
+    - **in_grace**: Only users with temporary access open right now (the «temporary until» mark); false — everyone else
     - **has_restrictions** / **has_subscription**: Restriction flags / any subscription at all
     - **purchase_count**: Only 0 is supported — users without a completed subscription payment
     - **traffic_used_percent_min**: Live subscription with at least N % of its traffic limit used (unlimited excluded)
-    - **sort_by**: Sort field (created_at, balance, traffic, last_activity, total_spent, purchase_count, subscription_end_date)
+    - **sort_by**: Sort field (created_at, balance, traffic, last_activity, total_spent, purchase_count, subscription_end_date, grace_until)
+    - **sort_order**: asc / desc; omitted — soonest first for subscription_end_date and grace_until, largest/newest first otherwise
     """
     # Convert status enum to model enum
     user_status = None
@@ -488,6 +541,7 @@ async def list_users(
     order_by_total_spent = sort_by == SortByEnum.TOTAL_SPENT
     order_by_purchase_count = sort_by == SortByEnum.PURCHASE_COUNT
     order_by_subscription_end = sort_by == SortByEnum.SUBSCRIPTION_END_DATE
+    order_by_grace = sort_by == SortByEnum.GRACE_UNTIL
 
     # Parse comma-separated tariff_ids
     tariff_ids: list[int] | None = None
@@ -498,16 +552,19 @@ async def list_users(
             tariff_ids = None
 
     # «Онлайн» — подключение к VPN по панели, а не кнопки в боте (см. app/services/panel_online.py).
-    # Отметка «в сети» нужна каждой строке, поэтому список подключённых берём всегда;
-    # он кэшируется на 20 секунд. Без ответа панели фильтр «онлайн» не угадывает, а честно отказывает.
-    from app.services.panel_online import get_connected_accounts
+    # Отметка «в сети» нужна каждой строке, поэтому снимок отметок берём всегда; он
+    # кэшируется на 20 секунд, а «кто онлайн» пересчитывается здесь, на момент ответа, —
+    # иначе кэш ещё двадцать секунд называл бы онлайн тех, кого панель уже погасила.
+    # Без ответа панели фильтр «онлайн» не угадывает, а честно отказывает.
+    from app.services.panel_online import get_online_snapshot
 
-    connected = await get_connected_accounts()
-    if online and connected is None:
+    snapshot = await get_online_snapshot()
+    if online and snapshot is None:
         raise HTTPException(
             status_code=503,
             detail='Панель не ответила — не удалось узнать, кто сейчас подключён. Попробуйте ещё раз.',
         )
+    connected = snapshot.connected_now() if snapshot is not None else None
     online_filter = connected if online else None
 
     users = await get_users_list(
@@ -529,12 +586,15 @@ async def list_users(
         purchase_count=purchase_count,
         traffic_used_percent_min=traffic_used_percent_min,
         connected=online_filter,
+        in_grace=in_grace,
         order_by_balance=order_by_balance,
         order_by_traffic=order_by_traffic,
         order_by_last_activity=order_by_last_activity,
         order_by_total_spent=order_by_total_spent,
         order_by_purchase_count=order_by_purchase_count,
         order_by_subscription_end=order_by_subscription_end,
+        order_by_grace=order_by_grace,
+        sort_descending=None if sort_order is None else sort_order == SortOrderEnum.DESC,
     )
 
     total = await get_users_count(
@@ -554,15 +614,29 @@ async def list_users(
         purchase_count=purchase_count,
         traffic_used_percent_min=traffic_used_percent_min,
         connected=online_filter,
+        in_grace=in_grace,
     )
 
     # Get spending stats for all users
     user_ids = [u.id for u in users]
     spending_stats = await get_users_spending_stats(db, user_ids) if user_ids else {}
 
+    # Строка обязана показать ту подписку, по которой человек попал в выборку,
+    # иначе у владельца нескольких тарифов «Трафик на исходе» рисует полосу
+    # пустого тарифа. См. tests/cabinet/test_admin_users_multi_tariff_and_grace.py.
+    if traffic_used_percent_min is not None:
+        highlight = HIGHLIGHT_TRAFFIC
+    elif subscription_status:
+        highlight = f'{HIGHLIGHT_STATUS_PREFIX}{subscription_status}'
+    else:
+        highlight = None
+
     items = [
-        _build_user_list_item(u, spending_stats).model_copy(
-            update={'is_online': connected.has_user(u) if connected is not None else None}
+        _build_user_list_item(u, spending_stats, highlight=highlight).model_copy(
+            update={
+                'is_online': connected.has_user(u) if connected is not None else None,
+                'online_at': snapshot.online_at_for(u) if snapshot is not None else None,
+            }
         )
         for u in users
     ]
@@ -584,27 +658,13 @@ async def get_users_stats(
     stats = await get_users_statistics(db)
 
     # Get subscription stats
+    # Те же сегменты, что у фильтров списка: плитки и выборки не должны расходиться.
+    _stats_now = datetime.now(UTC)
     sub_stats_query = select(
         func.count(Subscription.id).label('total'),
-        func.sum(
-            func.cast(
-                and_(
-                    Subscription.status == SubscriptionStatus.ACTIVE.value,
-                    Subscription.end_date > datetime.now(UTC),
-                ),
-                Integer,
-            )
-        ).label('active'),
-        func.sum(func.cast(Subscription.is_trial == True, Integer)).label('trial'),
-        func.sum(
-            func.cast(
-                or_(
-                    Subscription.status == SubscriptionStatus.EXPIRED.value,
-                    Subscription.end_date <= datetime.now(UTC),
-                ),
-                Integer,
-            )
-        ).label('expired'),
+        func.sum(func.cast(segment_condition('active', _stats_now), Integer)).label('active'),
+        func.sum(func.cast(segment_condition('trial', _stats_now), Integer)).label('trial'),
+        func.sum(func.cast(segment_condition('expired', _stats_now), Integer)).label('expired'),
     )
     sub_result = await db.execute(sub_stats_query)
     sub_row = sub_result.one_or_none()
@@ -2974,18 +3034,32 @@ async def reset_user_trial(
                 wiped = await wipe_trial_subscriptions(db, subs_to_delete)
                 subscription_deleted = wiped > 0
 
-    user.updated_at = datetime.now(UTC)
+    now = datetime.now(UTC)
+    # Отметку «когда-то платил» не снимаем — по ней считаются конверсия и выручка.
+    # Дата сброса перекрывает её до появления следующей подписки (User.is_trial_already_used).
+    user.trial_reset_at = now
+    user.updated_at = now
 
     await db.commit()
+    await db.refresh(user, ['subscriptions'])
 
     reason_text = f' (reason: {request.reason})' if request.reason else ''
     logger.info('Admin reset trial for user', admin_id=admin.id, user_id=user_id, reason_text=reason_text)
 
+    # Оставшаяся непробная подписка сама закрывает триал. Сносить её сброс триала не
+    # должен, но и молчать нельзя: раньше ответ был «успешно» даже тогда, когда для
+    # человека не менялось ничего, — и кнопка выглядела сломанной.
+    trial_available = not user.is_trial_already_used()
     return ResetTrialResponse(
-        success=True,
-        message='Trial reset successfully. User can now activate a new trial.',
+        success=trial_available,
+        message=(
+            'Trial reset successfully. User can now activate a new trial.'
+            if trial_available
+            else 'Trial is still unavailable: the user has another subscription. Remove it first.'
+        ),
         subscription_deleted=subscription_deleted,
         has_used_trial_reset=True,
+        trial_available=trial_available,
     )
 
 
@@ -3700,6 +3774,13 @@ async def get_user_sync_status(
         bot_device_limit = active_sub.device_limit or 0
         bot_squads = active_sub.connected_squads or []
 
+    # Пока открыт временный доступ, в панели стоит его оверлей: дата, статус, лимит
+    # и сквад — грейса, а не подписки. Бот их намеренно не перенимает
+    # (app/services/panel_sync/projection.py), поэтому и расхождением они не являются:
+    # иначе карточка сверки кричала бы «Есть отличия» на каждом человеке в грейсе.
+    grace_open = bool(active_sub and active_sub.grace_session_open)
+    grace_until = active_sub.grace_overlay_expire_at if grace_open and active_sub else None
+
     # In multi-tariff mode, the panel identity lives on subscription, not user
     effective_panel_user_id = (
         active_sub.remnawave_id
@@ -3758,13 +3839,13 @@ async def get_user_sync_status(
                     ]
 
                     # Check differences
-                    if bot_sub_status and panel_status:
+                    if bot_sub_status and panel_status and not grace_open:
                         bot_active = bot_sub_status in ('active', 'trial')
                         panel_active = panel_status.upper() == 'ACTIVE'
                         if bot_active != panel_active:
                             differences.append(f'Status: bot={bot_sub_status}, panel={panel_status}')
 
-                    if bot_sub_end_date and panel_expire_at:
+                    if bot_sub_end_date and panel_expire_at and not grace_open:
                         bot_end_utc = bot_sub_end_date if bot_sub_end_date.tzinfo else bot_sub_end_date
                         panel_end_utc = panel_datetime_to_utc(panel_expire_at)
 
@@ -3775,7 +3856,7 @@ async def get_user_sync_status(
                         if diff_seconds > 3600 and not is_timezone_diff:  # More than 1 hour and not timezone
                             differences.append(f'End date differs by {diff_seconds / 3600:.1f} hours')
 
-                    if abs(bot_traffic_limit - panel_traffic_limit) > 1:
+                    if not grace_open and abs(bot_traffic_limit - panel_traffic_limit) > 1:
                         differences.append(
                             f'Traffic limit: bot={bot_traffic_limit}GB, panel={panel_traffic_limit:.1f}GB'
                         )
@@ -3792,7 +3873,7 @@ async def get_user_sync_status(
                     # Compare squads
                     bot_squads_set = set(bot_squads) if bot_squads else set()
                     panel_squads_set = set(panel_squads) if panel_squads else set()
-                    if bot_squads_set != panel_squads_set:
+                    if not grace_open and bot_squads_set != panel_squads_set:
                         only_in_bot = bot_squads_set - panel_squads_set
                         only_in_panel = panel_squads_set - bot_squads_set
                         squad_diff_parts = []
@@ -3836,6 +3917,8 @@ async def get_user_sync_status(
         panel_traffic_used_gb=panel_traffic_used,
         panel_device_limit=panel_device_limit,
         panel_squads=panel_squads,
+        grace_open=grace_open,
+        grace_until=grace_until,
         has_differences=len(differences) > 0,
         differences=differences,
     )
@@ -4056,6 +4139,12 @@ async def sync_user_from_panel(
                     policy=ADMIN_PULL if request.update_subscription else ROUTINE,
                     trust_status=request.update_subscription,
                 )
+                # Одиночный режим: аккаунт найден по пользователю, строка подписки могла
+                # остаться без id после старого импорта. В мультитарифе привязка выше.
+                if not settings.is_multi_tariff_enabled() and await link_subscription_panel_identity(
+                    db, sync_sub, panel_user.id
+                ):
+                    changes['subscription_remnawave_id'] = {'old': None, 'new': panel_user.id}
                 for field in sorted(changed_fields):
                     old_value = before[field]
                     new_value = getattr(sync_sub, field)
