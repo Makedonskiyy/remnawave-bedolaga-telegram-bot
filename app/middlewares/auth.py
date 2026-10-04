@@ -44,6 +44,16 @@ async def _refresh_remnawave_description(remnawave_id: int, description: str, te
             await patch_panel_account(api, user_id=remnawave_id, description=description)
         logger.info('✅ [Middleware] Описание пользователя обновлено в RemnaWave', telegram_id=telegram_id)
     except Exception as remnawave_error:
+        from app.external.remnawave_api import is_user_not_found_error
+
+        if is_user_not_found_error(remnawave_error):
+            logger.warning(
+                'ℹ️ [Middleware] Пользователь не найден в панели RemnaWave (возможно, аккаунт был удалён)',
+                telegram_id=telegram_id,
+                remnawave_id=remnawave_id,
+            )
+            return
+
         logger.error(
             '❌ [Middleware] Ошибка обновления описания пользователя в RemnaWave',
             telegram_id=telegram_id,
