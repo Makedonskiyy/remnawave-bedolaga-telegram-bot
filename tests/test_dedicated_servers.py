@@ -293,3 +293,19 @@ async def test_dedicated_server_save_and_load_pricing():
     price_us = DedicatedServerService.calculate_order_price(30, 'US')
     assert price_us == 249000
 
+
+def test_dedicated_server_route_order_no_conflict():
+    """Verify admin_dedicated_servers router takes precedence over admin_servers /{server_id}."""
+    from fastapi import FastAPI
+    from app.cabinet.routes import router as cabinet_router
+
+    app = FastAPI()
+    app.include_router(cabinet_router)
+
+    prefixes = [getattr(r.original_router, 'prefix', '') for r in cabinet_router.routes if hasattr(r, 'original_router')]
+    assert '/admin/servers/dedicated' in prefixes
+    assert '/admin/servers' in prefixes
+    dedicated_idx = prefixes.index('/admin/servers/dedicated')
+    servers_idx = prefixes.index('/admin/servers')
+    assert dedicated_idx < servers_idx, f'Dedicated router ({dedicated_idx}) must precede servers router ({servers_idx})'
+
