@@ -13,6 +13,8 @@ class DedicatedServerCountry(BaseModel):
     flag: str
     continent: str
     city: str
+    base_price_rubles: float | None = None
+    base_price_kopeks: int | None = None
 
 
 class DedicatedServerOption(BaseModel):
@@ -34,6 +36,16 @@ class DedicatedServerPeriodPrice(BaseModel):
     discount_percent: int = 0
 
 
+class DedicatedServerPeriodDiscount(BaseModel):
+    """Period discount item for frontend compatibility."""
+
+    period_days: int
+    discount_percent: int = 0
+    label: str | None = None
+    price_rubles: float | None = None
+    price_kopeks: int | None = None
+
+
 class DedicatedServerMarketing(BaseModel):
     """Marketing content, terms of service and value propositions."""
 
@@ -50,6 +62,11 @@ class DedicatedServerConfigResponse(BaseModel):
 
     countries: list[DedicatedServerCountry]
     period_prices: list[DedicatedServerPeriodPrice]
+    periods: list[DedicatedServerPeriodDiscount] = Field(default_factory=list)
+    base_price_rubles: float = 1290.0
+    base_price_kopeks: int = 129000
+    country_prices_rubles: dict[str, float] = Field(default_factory=dict)
+    country_prices_kopeks: dict[str, int] = Field(default_factory=dict)
     options: list[DedicatedServerOption]
     marketing: DedicatedServerMarketing
     byos_supported: bool = True

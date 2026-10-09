@@ -249,11 +249,38 @@ class DedicatedServerService:
     @classmethod
     def get_config_response(cls) -> dict[str, Any]:
         pricing = cls.get_pricing_sync()
-        base_price = pricing.get('base_monthly_price_kopeks', DEFAULT_BASE_MONTHLY_PRICE_KOPEKS)
-        discounts = pricing.get('period_discounts', {})
+        base_price_kopeks = pricing.get('base_monthly_price_kopeks', DEFAULT_BASE_MONTHLY_PRICE_KOPEKS)
+        discounts = pricing.get('period_discounts', {'30': 0, '90': 10, '180': 15, '365': 22})
+        country_prices_kopeks = pricing.get('country_prices_kopeks', {})
+        period_prices = cls.get_period_prices(base_price_kopeks, discounts)
+
+        periods = [
+            {
+                'period_days': p['days'],
+                'discount_percent': p['discount_percent'],
+                'label': f"{p['days'] // 30 if p['days'] < 365 else 12} мес.",
+                'price_rubles': p['price_rubles'],
+                'price_kopeks': p['price_kopeks'],
+            }
+            for p in period_prices
+        ]
+
+        enriched_countries = []
+        for c in DEDICATED_SERVER_COUNTRIES:
+            c_dict = dict(c)
+            country_kopeks = country_prices_kopeks.get(c['code'], base_price_kopeks)
+            c_dict['base_price_rubles'] = round(country_kopeks / 100, 2)
+            c_dict['base_price_kopeks'] = country_kopeks
+            enriched_countries.append(c_dict)
+
         return {
-            'countries': DEDICATED_SERVER_COUNTRIES,
-            'period_prices': cls.get_period_prices(base_price, discounts),
+            'countries': enriched_countries,
+            'period_prices': period_prices,
+            'periods': periods,
+            'base_price_rubles': round(base_price_kopeks / 100, 2),
+            'base_price_kopeks': base_price_kopeks,
+            'country_prices_rubles': {code: round(kop / 100, 2) for code, kop in country_prices_kopeks.items()},
+            'country_prices_kopeks': country_prices_kopeks,
             'options': DEDICATED_SERVER_OPTIONS,
             'marketing': DEDICATED_MARKETING_CONTENT,
             'byos_supported': True,

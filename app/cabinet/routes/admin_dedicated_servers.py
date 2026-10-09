@@ -115,6 +115,44 @@ async def list_dedicated_server_orders(
     return DedicatedServerListResponse(orders=items, total=total)
 
 
+@router.get('/pricing/config', response_model=DedicatedServerPricingConfig)
+async def get_dedicated_server_pricing(
+    admin: User = Depends(require_permission('servers:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get current dedicated server pricing configuration."""
+    pricing = await DedicatedServerService.get_pricing_config(db)
+    base_kopeks = pricing.get('base_monthly_price_kopeks', 129000)
+    return DedicatedServerPricingConfig(
+        base_monthly_price_kopeks=base_kopeks,
+        base_monthly_price_rubles=round(base_kopeks / 100, 2),
+        period_discounts=pricing.get('period_discounts', {'30': 0, '90': 10, '180': 15, '365': 22}),
+        country_prices_kopeks=pricing.get('country_prices_kopeks', {}),
+    )
+
+
+@router.put('/pricing/config', response_model=DedicatedServerPricingConfig)
+async def update_dedicated_server_pricing(
+    request: DedicatedServerPricingUpdateRequest,
+    admin: User = Depends(require_permission('servers:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update dedicated server base monthly price and discounts."""
+    updated = await DedicatedServerService.save_pricing_config(
+        db=db,
+        base_monthly_price_kopeks=request.base_monthly_price_kopeks,
+        period_discounts=request.period_discounts,
+        country_prices_kopeks=request.country_prices_kopeks,
+    )
+    base_kopeks = updated.get('base_monthly_price_kopeks', request.base_monthly_price_kopeks)
+    return DedicatedServerPricingConfig(
+        base_monthly_price_kopeks=base_kopeks,
+        base_monthly_price_rubles=round(base_kopeks / 100, 2),
+        period_discounts=updated.get('period_discounts', {}),
+        country_prices_kopeks=updated.get('country_prices_kopeks', {}),
+    )
+
+
 @router.get('/{order_id}', response_model=DedicatedServerOrderItem)
 async def get_dedicated_server_order(
     order_id: int,
@@ -233,41 +271,3 @@ async def update_order_status(
     await db.commit()
     await db.refresh(order)
     return _order_to_item(order)
-
-
-@router.get('/pricing/config', response_model=DedicatedServerPricingConfig)
-async def get_dedicated_server_pricing(
-    admin: User = Depends(require_permission('servers:read')),
-    db: AsyncSession = Depends(get_cabinet_db),
-):
-    """Get current dedicated server pricing configuration."""
-    pricing = await DedicatedServerService.get_pricing_config(db)
-    base_kopeks = pricing.get('base_monthly_price_kopeks', 129000)
-    return DedicatedServerPricingConfig(
-        base_monthly_price_kopeks=base_kopeks,
-        base_monthly_price_rubles=round(base_kopeks / 100, 2),
-        period_discounts=pricing.get('period_discounts', {'30': 0, '90': 10, '180': 15, '365': 22}),
-        country_prices_kopeks=pricing.get('country_prices_kopeks', {}),
-    )
-
-
-@router.put('/pricing/config', response_model=DedicatedServerPricingConfig)
-async def update_dedicated_server_pricing(
-    request: DedicatedServerPricingUpdateRequest,
-    admin: User = Depends(require_permission('servers:edit')),
-    db: AsyncSession = Depends(get_cabinet_db),
-):
-    """Update dedicated server base monthly price and discounts."""
-    updated = await DedicatedServerService.save_pricing_config(
-        db=db,
-        base_monthly_price_kopeks=request.base_monthly_price_kopeks,
-        period_discounts=request.period_discounts,
-        country_prices_kopeks=request.country_prices_kopeks,
-    )
-    base_kopeks = updated.get('base_monthly_price_kopeks', request.base_monthly_price_kopeks)
-    return DedicatedServerPricingConfig(
-        base_monthly_price_kopeks=base_kopeks,
-        base_monthly_price_rubles=round(base_kopeks / 100, 2),
-        period_discounts=updated.get('period_discounts', {}),
-        country_prices_kopeks=updated.get('country_prices_kopeks', {}),
-    )

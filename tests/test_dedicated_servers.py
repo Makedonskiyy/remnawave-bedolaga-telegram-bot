@@ -309,6 +309,25 @@ def test_dedicated_server_route_order_no_conflict():
     servers_idx = prefixes.index('/admin/servers')
     assert dedicated_idx < servers_idx, f'Dedicated router ({dedicated_idx}) must precede servers router ({servers_idx})'
 
+    from app.cabinet.routes.admin_dedicated_servers import router as admin_dedicated_router
+    route_paths = [r.path for r in admin_dedicated_router.routes]
+    pricing_idx = route_paths.index('/admin/servers/dedicated/pricing/config')
+    order_id_idx = route_paths.index('/admin/servers/dedicated/{order_id}')
+    assert pricing_idx < order_id_idx, f'pricing/config ({pricing_idx}) must precede {{order_id}} ({order_id_idx}) to avoid 422 shadowing'
+
+
+def test_dedicated_server_config_response_includes_pricing_and_periods():
+    """Verify get_config_response returns base_price_rubles, periods, and country prices for the catalog."""
+    config = DedicatedServerService.get_config_response()
+    assert 'base_price_rubles' in config
+    assert 'base_price_kopeks' in config
+    assert 'periods' in config
+    assert len(config['periods']) >= 4
+    for p in config['periods']:
+        assert 'period_days' in p
+        assert 'discount_percent' in p
+        assert 'label' in p
+
 
 def test_dedicated_server_is_not_legacy_subscription(monkeypatch):
     """Verify dedicated server subscriptions are NOT flagged as legacy subscriptions requiring tariff selection."""
