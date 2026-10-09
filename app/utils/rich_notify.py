@@ -203,3 +203,167 @@ async def try_send_rich_notification(
         # TelegramAPIError, и иначе прошёл бы мимо всех except выше.
         logger.warning('Непредвиденная ошибка rich-уведомления', error=str(error), chat_id=chat_id)
         return False
+
+
+def build_broadcast_rich_html(text: str, *, logo_url: str = '') -> str | None:
+    """Текст рассылки → rich-разметка с поддержкой Article/заголовков/разделителей."""
+    if not text or not text.strip():
+        return None
+
+    # 1. Заменяем классические спойлеры на tg-spoiler
+    value = _SPOILER_SPAN_RE.sub(r'<tg-spoiler>\2</tg-spoiler>', text.strip())
+
+    # 2. Разворачиваем теги-контейнеры article, section, div, main, header, footer
+    value = re.sub(r'</?(?:article|section|main|header|footer|div)\b[^>]*>', '', value, flags=re.IGNORECASE)
+
+    # 3. Нормализуем заголовки: h1-h4 -> h4, h5-h6 -> h6
+    value = re.sub(r'<h[1-4]\b[^>]*>(.*?)</h[1-4]>', r'<h4>\1</h4>', value, flags=re.IGNORECASE | re.DOTALL)
+    value = re.sub(r'<h[5-6]\b[^>]*>(.*?)</h[5-6]>', r'<h6>\1</h6>', value, flags=re.IGNORECASE | re.DOTALL)
+
+    # 4. Нормализуем разделители hr
+    value = re.sub(r'<hr\s*/?>', '<hr/>', value, flags=re.IGNORECASE)
+
+    # 5. Преобразуем списки li в буллеты с переносом
+    value = re.sub(r'<li\b[^>]*>(.*?)</li>', r'• \1<br/>', value, flags=re.IGNORECASE | re.DOTALL)
+    value = re.sub(r'</?(?:ul|ol)\b[^>]*>', '', value, flags=re.IGNORECASE)
+
+    # 6. Проверяем наличие блочной разметки
+    has_rich_blocks = bool(re.search(r'<(?:h[46]|hr/|p|blockquote|table|details)\b', value, re.IGNORECASE))
+
+    blocks: list[str] = []
+    if logo_url:
+        blocks.append(f'<img src="{html.escape(logo_url, quote=True)}"/>')
+
+    if not has_rich_blocks:
+        lines = value.split('\n')
+        first_index = next((i for i, line in enumerate(lines) if line.strip()), None)
+        if first_index is None:
+            return None
+        title = lines[first_index].strip()
+        rest = lines[first_index + 1 :]
+        if _visible_length(title) <= _TITLE_MAX_LENGTH and any(line.strip() for line in rest):
+            blocks.append(f'<h4>{title}</h4>')
+            blocks.append('<hr/>')
+            blocks.extend(_paragraphs_html(rest))
+        else:
+            blocks.extend(_paragraphs_html(lines[first_index:]))
+    else:
+        chunks = [chunk.strip('\n') for chunk in re.split(r'\n\s*\n+', value) if chunk.strip()]
+        formatted_chunks = []
+        for chunk in chunks:
+            if re.match(r'^\s*<(?:h[46]|hr/|p|blockquote|table|details)\b', chunk, re.IGNORECASE):
+                formatted_chunks.append(chunk.replace('\n', '<br/>'))
+            else:
+                formatted_chunks.append(f'<p>{chunk.replace(chr(10), "<br/>")}</p>')
+        blocks.append(''.join(formatted_chunks))
+
+    result = ''.join(blocks)
+    return result if result.strip() else None
+
+
+def broadcast_html_to_classic(text: str) -> str:
+    """Конвертирует rich/article HTML в 100% валидный классический HTML Telegram.
+
+    Гарантирует, что Telegram Bot API send_message(parse_mode='HTML')
+    никогда не упадет с ошибкой «Unsupported start tag» на h1-h6, hr, article, p и т.д.
+    """
+    if not text:
+        return ''
+
+    # Разворачиваем теги-контейнеры
+    value = re.sub(r'</?(?:article|section|main|header|footer|div)\b[^>]*>', '', text, flags=re.IGNORECASE)
+
+    # Заголовки h1-h3 -> жирный заголовок с отступами
+    value = re.sub(r'<h[1-3]\b[^>]*>(.*?)</h[1-3]>', r'\n\n<b>\1</b>\n', value, flags=re.IGNORECASE | re.DOTALL)
+    # Заголовки h4-h6 -> жирный заголовок
+    value = re.sub(r'<h[4-6]\b[^>]*>(.*?)</h[4-6]>', r'\n<b>\1</b>\n', value, flags=re.IGNORECASE | re.DOTALL)
+
+    # Разделитель hr -> визуальная текстовая линия
+    value = re.sub(r'<hr\s*/?>', '\n───────────────\n', value, flags=re.IGNORECASE)
+
+    # Абзацы p -> переносы строк
+    value = re.sub(r'<p\b[^>]*>(.*?)</p>', r'\n\n\1\n', value, flags=re.IGNORECASE | re.DOTALL)
+
+    # Элементы списков li -> маркер списка
+    value = re.sub(r'<li\b[^>]*>(.*?)</li>', r'• \1\n', value, flags=re.IGNORECASE | re.DOTALL)
+    value = re.sub(r'</?(?:ul|ol)\b[^>]*>', '', value, flags=re.IGNORECASE)
+
+    # Details / summary
+    value = re.sub(r'<summary\b[^>]*>(.*?)</summary>', r'<b>\1</b>\n', value, flags=re.IGNORECASE | re.DOTALL)
+    value = re.sub(r'</?details\b[^>]*>', '', value, flags=re.IGNORECASE)
+
+    # Переносы строк br -> \n
+    value = re.sub(r'<br\s*/?>', '\n', value, flags=re.IGNORECASE)
+
+    # Удаляем картинки
+    value = re.sub(r'<img\b[^>]*>', '', value, flags=re.IGNORECASE)
+
+    # Разрешенные классические теги Telegram:
+    # b, strong, i, em, u, ins, s, strike, del, code, pre, a, blockquote, tg-spoiler, tg-emoji, span
+    allowed = r'b|strong|i|em|u|ins|s|strike|del|code|pre|a|blockquote|tg-spoiler|tg-emoji|span'
+    value = re.sub(rf'</?(?!(?:{allowed})\b)[a-zA-Z0-9-]+[^>]*>', '', value, flags=re.IGNORECASE)
+
+    # Убираем избыточные пустые строки
+    value = re.sub(r'\n{3,}', '\n\n', value)
+    return value.strip()
+
+
+async def try_send_rich_broadcast(
+    bot: Bot,
+    chat_id: int,
+    text: str,
+    *,
+    keyboard: InlineKeyboardMarkup | None = None,
+    with_logo: bool = False,
+    timeout: float | None = None,
+) -> bool:
+    """Шлёт рассылку rich-сообщением с поддержкой заголовков и разметки статьи."""
+    if not settings.USER_NOTIFICATIONS_RICH_ENABLED or not is_rich_menu_enabled():
+        return False
+
+    logo_url = _resolve_rich_logo_url() if with_logo else ''
+    rich_html = build_broadcast_rich_html(text, logo_url=logo_url)
+    if rich_html is None or len(rich_html) > RICH_TEXT_LIMIT:
+        return False
+
+    reply_markup = keyboard
+    if keyboard is not None and settings.MAIN_MENU_RICH_INLINE_BUTTONS:
+        buttons_html = render_keyboard_as_rich_html(keyboard, allow_web_app=True)
+        if buttons_html is not None:
+            rich_html += buttons_html
+            reply_markup = None
+            if len(rich_html) > RICH_TEXT_LIMIT:
+                return False
+
+    kwargs: dict = {
+        'chat_id': chat_id,
+        'rich_message': InputRichMessage(html=rich_html, skip_entity_detection=True),
+    }
+    if reply_markup is not None:
+        kwargs['reply_markup'] = reply_markup
+
+    try:
+        if timeout is not None:
+            await asyncio.wait_for(bot.send_rich_message(**kwargs), timeout=timeout)
+        else:
+            await bot.send_rich_message(**kwargs)
+        return True
+    except TimeoutError:
+        raise
+    except TelegramForbiddenError:
+        return False
+    except (TelegramNotFound, TelegramBadRequest) as error:
+        if logo_url and _is_media_fetch_error(error):
+            _mark_logo_unavailable_once(error)
+            return await try_send_rich_broadcast(
+                bot, chat_id, text, keyboard=keyboard, with_logo=False, timeout=timeout
+            )
+        if _looks_like_unsupported(error):
+            _mark_rich_unavailable(error)
+            return False
+        logger.warning('Rich-рассылка не отправлена, фоллбек на классику', error=str(error), chat_id=chat_id)
+        return False
+    except Exception as error:
+        logger.warning('Непредвиденная ошибка rich-рассылки', error=str(error), chat_id=chat_id)
+        return False
+

@@ -520,8 +520,11 @@ class BroadcastService:
         if not self._bot:
             raise RuntimeError('Телеграм-бот не инициализирован')
 
+        from app.utils.rich_notify import broadcast_html_to_classic, try_send_rich_broadcast
+
         if config.media and config.media.type in VALID_MEDIA_TYPES:
-            caption = config.media.caption or config.message_text
+            raw_caption = config.media.caption or config.message_text
+            safe_caption = broadcast_html_to_classic(raw_caption)
             media_methods = {
                 'photo': ('photo', self._bot.send_photo),
                 'video': ('video', self._bot.send_video),
@@ -531,18 +534,14 @@ class BroadcastService:
             await send_method(
                 chat_id=telegram_id,
                 **{kwarg_name: config.media.file_id},
-                caption=caption,
+                caption=safe_caption,
                 parse_mode='HTML',
                 reply_markup=keyboard,
             )
             return
 
-        # Медиа-ветка выше уходит как есть: rich-сообщение не несёт загруженный
-        # по file_id файл. Текстовую рассылку показываем в том же виде, что меню и
-        # остальные уведомления; при отказе ниже отрабатывает обычная отправка.
-        from app.utils.rich_notify import try_send_rich_notification
-
-        if await try_send_rich_notification(
+        # Пробуем отправить в современном rich-формате статьи (с заголовками h1-h6, hr, p, blockquote)
+        if await try_send_rich_broadcast(
             self._bot,
             telegram_id,
             config.message_text,
@@ -551,9 +550,11 @@ class BroadcastService:
         ):
             return
 
+        # Безопасный фоллбек на классический HTML без риска получить Unsupported start tag от Telegram
+        safe_text = broadcast_html_to_classic(config.message_text)
         await self._bot.send_message(
             chat_id=telegram_id,
-            text=config.message_text,
+            text=safe_text,
             parse_mode='HTML',
             reply_markup=keyboard,
         )
