@@ -264,3 +264,32 @@ async def test_dedicated_server_workflow():
         _, r_kwargs = mock_refund.call_args
         assert r_kwargs['transaction_type'] == TransactionType.REFUND
         assert r_kwargs['amount_kopeks'] == order.amount_kopeks
+
+
+@pytest.mark.asyncio
+async def test_dedicated_server_save_and_load_pricing():
+    """Verify admin can save and reload custom dynamic pricing."""
+    db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = None
+    db.execute.return_value = mock_res
+
+    # Save custom pricing: 1 990 rub base price
+    saved = await DedicatedServerService.save_pricing_config(
+        db=db,
+        base_monthly_price_kopeks=199000,
+        period_discounts={'30': 0, '90': 12, '180': 20, '365': 25},
+        country_prices_kopeks={'US': 249000},
+    )
+
+    assert saved['base_monthly_price_kopeks'] == 199000
+    assert saved['period_discounts']['90'] == 12
+    assert saved['country_prices_kopeks']['US'] == 249000
+
+    # Calculate price with updated settings
+    price_de = DedicatedServerService.calculate_order_price(30, 'DE')
+    assert price_de == 199000
+
+    price_us = DedicatedServerService.calculate_order_price(30, 'US')
+    assert price_us == 249000
+

@@ -5,6 +5,7 @@ to our RemnaWave infrastructure with unmetered traffic, unlimited devices,
 clean IPs, and exclusive addons (YouTube ad-blocking, global AI access).
 """
 
+import json
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -22,6 +23,7 @@ from app.database.models import (
     DedicatedServerOrder,
     DedicatedServerStatus,
     Subscription,
+    SystemSetting,
     TransactionType,
     User,
 )
@@ -136,40 +138,122 @@ class DedicatedServerService:
                 return item
         return None
 
+    DEDICATED_SERVERS_PRICING_KEY = 'DEDICATED_SERVERS_PRICING'
+    _cached_pricing: dict[str, Any] = {
+        'base_monthly_price_kopeks': DEFAULT_BASE_MONTHLY_PRICE_KOPEKS,
+        'period_discounts': {'30': 0, '90': 10, '180': 15, '365': 22},
+        'country_prices_kopeks': {},
+    }
+
+    @classmethod
+    def get_pricing_sync(cls) -> dict[str, Any]:
+        return dict(cls._cached_pricing)
+
+    @classmethod
+    async def get_pricing_config(cls, db: AsyncSession | None = None) -> dict[str, Any]:
+        """Получить текущие настройки цен личных серверов из БД или кэша."""
+        if db is not None:
+            try:
+                res = await db.execute(
+                    select(SystemSetting).where(SystemSetting.key == cls.DEDICATED_SERVERS_PRICING_KEY)
+                )
+                setting = res.scalar_one_or_none()
+                if setting and setting.value:
+                    loaded = json.loads(setting.value)
+                    if isinstance(loaded, dict):
+                        cls._cached_pricing.update(loaded)
+            except Exception as e:
+                logger.warning('Failed to load dedicated server pricing from DB, using defaults', error=str(e))
+        return dict(cls._cached_pricing)
+
+    @classmethod
+    async def save_pricing_config(
+        cls,
+        db: AsyncSession,
+        base_monthly_price_kopeks: int,
+        period_discounts: dict[str, int] | None = None,
+        country_prices_kopeks: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        """Сохранить настройки цен личных серверов в БД."""
+        cls._cached_pricing['base_monthly_price_kopeks'] = base_monthly_price_kopeks
+        if period_discounts is not None:
+            cls._cached_pricing['period_discounts'] = period_discounts
+        if country_prices_kopeks is not None:
+            cls._cached_pricing['country_prices_kopeks'] = country_prices_kopeks
+
+        res = await db.execute(
+            select(SystemSetting).where(SystemSetting.key == cls.DEDICATED_SERVERS_PRICING_KEY)
+        )
+        setting = res.scalar_one_or_none()
+        if not setting:
+            setting = SystemSetting(
+                key=cls.DEDICATED_SERVERS_PRICING_KEY,
+                value=json.dumps(cls._cached_pricing, ensure_ascii=False),
+            )
+            db.add(setting)
+        else:
+            setting.value = json.dumps(cls._cached_pricing, ensure_ascii=False)
+
+        await db.commit()
+        return dict(cls._cached_pricing)
+
     @staticmethod
-    def get_period_prices(base_monthly_kopeks: int = DEFAULT_BASE_MONTHLY_PRICE_KOPEKS) -> list[dict[str, Any]]:
+    def get_period_prices(
+        base_monthly_kopeks: int = DEFAULT_BASE_MONTHLY_PRICE_KOPEKS,
+        discounts: dict[str, int] | None = None,
+    ) -> list[dict[str, Any]]:
         """Расчёт тарифов с накопительными скидками за срок."""
-        periods = [
-            {'days': 30, 'discount_percent': 0, 'multiplier': 1.0},
-            {'days': 90, 'discount_percent': 10, 'multiplier': 2.7},   # ~10% скидка
-            {'days': 180, 'discount_percent': 15, 'multiplier': 5.1},  # ~15% скидка
-            {'days': 365, 'discount_percent': 22, 'multiplier': 9.36}, # ~22% скидка
+        disc_map = discounts or {'30': 0, '90': 10, '180': 15, '365': 22}
+        period_defs = [
+            (30, int(disc_map.get('30', 0))),
+            (90, int(disc_map.get('90', 10))),
+            (180, int(disc_map.get('180', 15))),
+            (365, int(disc_map.get('365', 22))),
         ]
         result = []
-        for p in periods:
-            price_kopeks = int(base_monthly_kopeks * p['multiplier'])
+        for days, disc_pct in period_defs:
+            months = days / 30.0
+            raw_price = int(base_monthly_kopeks * months)
+            discount_amount = int(raw_price * (disc_pct / 100.0))
+            price_kopeks = max(100, raw_price - discount_amount)
             result.append({
-                'days': p['days'],
+                'days': days,
                 'price_kopeks': price_kopeks,
                 'price_rubles': round(price_kopeks / 100, 2),
-                'discount_percent': p['discount_percent'],
+                'discount_percent': disc_pct,
             })
         return result
 
-    @staticmethod
-    def calculate_order_price(period_days: int, base_monthly_kopeks: int = DEFAULT_BASE_MONTHLY_PRICE_KOPEKS) -> int:
-        for p in DedicatedServerService.get_period_prices(base_monthly_kopeks):
+    @classmethod
+    def calculate_order_price(
+        cls,
+        period_days: int,
+        country_code: str | None = None,
+        base_monthly_kopeks: int | None = None,
+    ) -> int:
+        pricing = cls.get_pricing_sync()
+        base_price = base_monthly_kopeks if base_monthly_kopeks is not None else pricing.get('base_monthly_price_kopeks', DEFAULT_BASE_MONTHLY_PRICE_KOPEKS)
+        if country_code:
+            code_upper = country_code.strip().upper()
+            country_overrides = pricing.get('country_prices_kopeks', {})
+            if code_upper in country_overrides:
+                base_price = country_overrides[code_upper]
+
+        discounts = pricing.get('period_discounts', {})
+        for p in cls.get_period_prices(base_price, discounts):
             if p['days'] == period_days:
                 return p['price_kopeks']
-        # Пропорциональный расчёт для произвольных дней
         months = max(1, period_days // 30)
-        return months * base_monthly_kopeks
+        return months * base_price
 
-    @staticmethod
-    def get_config_response() -> dict[str, Any]:
+    @classmethod
+    def get_config_response(cls) -> dict[str, Any]:
+        pricing = cls.get_pricing_sync()
+        base_price = pricing.get('base_monthly_price_kopeks', DEFAULT_BASE_MONTHLY_PRICE_KOPEKS)
+        discounts = pricing.get('period_discounts', {})
         return {
             'countries': DEDICATED_SERVER_COUNTRIES,
-            'period_prices': DedicatedServerService.get_period_prices(),
+            'period_prices': cls.get_period_prices(base_price, discounts),
             'options': DEDICATED_SERVER_OPTIONS,
             'marketing': DEDICATED_MARKETING_CONTENT,
             'byos_supported': True,
@@ -189,7 +273,7 @@ class DedicatedServerService:
         if not country:
             raise ValueError(f"Выбранная страна '{country_code}' не поддерживается для выделенных серверов")
 
-        amount_kopeks = DedicatedServerService.calculate_order_price(period_days)
+        amount_kopeks = DedicatedServerService.calculate_order_price(period_days, country_code)
         if user.balance_kopeks < amount_kopeks:
             missing_rubles = round((amount_kopeks - user.balance_kopeks) / 100, 2)
             raise ValueError(f'Недостаточно средств на балансе. Пополните баланс на {missing_rubles} ₽')

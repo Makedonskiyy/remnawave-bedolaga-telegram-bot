@@ -61,8 +61,11 @@ def _order_to_item(order: DedicatedServerOrder) -> DedicatedServerOrderItem:
 
 
 @router.get('/config', response_model=DedicatedServerConfigResponse)
-async def get_dedicated_server_config():
+async def get_dedicated_server_config(
+    db: AsyncSession = Depends(get_cabinet_db),
+):
     """Get configuration, pricing, supported countries and marketing highlights."""
+    await DedicatedServerService.get_pricing_config(db)
     config_data = DedicatedServerService.get_config_response()
     return DedicatedServerConfigResponse(**config_data)
 

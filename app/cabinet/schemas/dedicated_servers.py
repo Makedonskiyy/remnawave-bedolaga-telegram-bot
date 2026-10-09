@@ -123,6 +123,23 @@ class DedicatedServerAdminSettingsUpdate(BaseModel):
     allowed_country_codes: list[str] | None = None
 
 
+class DedicatedServerPricingConfig(BaseModel):
+    """Dynamic pricing configuration for dedicated servers."""
+
+    base_monthly_price_kopeks: int = 129000
+    base_monthly_price_rubles: float = 1290.0
+    period_discounts: dict[str, int] = Field(default_factory=lambda: {'30': 0, '90': 10, '180': 15, '365': 22})
+    country_prices_kopeks: dict[str, int] = Field(default_factory=dict)
+
+
+class DedicatedServerPricingUpdateRequest(BaseModel):
+    """Admin request to update dedicated server pricing."""
+
+    base_monthly_price_kopeks: int = Field(..., ge=1000)
+    period_discounts: dict[str, int] | None = None
+    country_prices_kopeks: dict[str, int] | None = None
+
+
 class DedicatedServerSetupScriptResponse(BaseModel):
     """Script response for node auto-installation."""
 

@@ -300,12 +300,20 @@ async def create_new_tariff(
     """Create a new tariff."""
     period_prices_dict = _period_prices_to_dict(request.period_prices)
 
-    # Преобразуем ServerTrafficLimit в dict для хранения
     server_limits_dict = (
         {uuid: limit.model_dump() for uuid, limit in request.server_traffic_limits.items()}
         if request.server_traffic_limits
         else {}
     )
+    # Defaults for pay-per-GB (whitelist) tariff
+    traffic_reset_mode = request.traffic_reset_mode
+    allow_traffic_topup = request.allow_traffic_topup
+    traffic_topup_enabled = request.traffic_topup_enabled
+    if request.tariff_type in ('whitelist', 'traffic'):
+        if traffic_reset_mode is None:
+            traffic_reset_mode = 'NO_RESET'
+        allow_traffic_topup = True
+        traffic_topup_enabled = True
 
     tariff = await create_tariff(
         db=db,
@@ -313,8 +321,8 @@ async def create_new_tariff(
         description=request.description,
         tariff_type=request.tariff_type,
         is_active=request.is_active,
-        allow_traffic_topup=request.allow_traffic_topup,
-        traffic_topup_enabled=request.traffic_topup_enabled,
+        allow_traffic_topup=allow_traffic_topup,
+        traffic_topup_enabled=traffic_topup_enabled,
         traffic_topup_packages=request.traffic_topup_packages,
         max_topup_traffic_gb=request.max_topup_traffic_gb,
         traffic_limit_gb=request.traffic_limit_gb,
@@ -452,6 +460,8 @@ async def update_existing_tariff(
     # Режим сброса трафика (None допускается как значение для сброса к глобальной настройке)
     if 'traffic_reset_mode' in request.model_fields_set:
         updates['traffic_reset_mode'] = request.traffic_reset_mode
+    elif (request.tariff_type in ('whitelist', 'traffic') or (request.tariff_type is None and tariff.is_whitelist)) and not tariff.traffic_reset_mode:
+        updates['traffic_reset_mode'] = 'NO_RESET'
     # Внешний сквад (None допускается для сброса)
     if 'external_squad_uuid' in request.model_fields_set:
         updates['external_squad_uuid'] = request.external_squad_uuid
