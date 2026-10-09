@@ -16,6 +16,7 @@ from .admin_button_styles import router as admin_button_styles_router
 from .admin_campaigns import router as admin_campaigns_router
 from .admin_channels import router as admin_channels_router
 from .admin_coupons import router as admin_coupons_router
+from .admin_dedicated_servers import router as admin_dedicated_servers_router
 from .admin_dpichecker import download_router as dpichecker_download_router, router as admin_dpichecker_router
 from .admin_email_queue import router as admin_email_queue_router
 from .admin_email_templates import router as admin_email_templates_router
@@ -58,6 +59,7 @@ from .balance import router as balance_router
 from .branding import router as branding_router
 from .contests import router as contests_router
 from .coupon import router as coupon_router
+from .dedicated_servers import router as dedicated_servers_router
 from .gift import router as gift_router
 from .info import router as info_router
 from .info_pages import router as info_pages_router
@@ -107,6 +109,7 @@ router.include_router(subscription_router)
 router.include_router(multi_tariff_subscription_router)
 router.include_router(balance_router)
 router.include_router(referral_router)
+router.include_router(dedicated_servers_router)
 
 # Apple IAP routes
 router.include_router(apple_iap_router)
@@ -144,6 +147,7 @@ router.include_router(admin_settings_router)
 router.include_router(admin_wheel_router)
 router.include_router(admin_tariffs_router)
 router.include_router(admin_servers_router)
+router.include_router(admin_dedicated_servers_router)
 router.include_router(admin_stats_router)
 router.include_router(admin_referral_network_router)
 router.include_router(admin_sales_stats_router)

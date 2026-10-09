@@ -138,6 +138,7 @@ class TransactionType(Enum):
     REFERRAL_REWARD = 'referral_reward'
     POLL_REWARD = 'poll_reward'
     GIFT_PAYMENT = 'gift_payment'
+    DEDICATED_SERVER = 'dedicated_server'
 
 
 class PromoCodeType(Enum):
@@ -5448,3 +5449,65 @@ class UserReminderState(Base):
     # Последний успех — по нему общий лимит «одно напоминание в сутки».
     last_success_at = Column(AwareDateTime(), nullable=True)
     dismissed_at = Column(AwareDateTime(), nullable=True)
+
+
+class DedicatedServerStatus(StrEnum):
+    """Статусы заказа персонального выделенного сервера."""
+
+    PENDING = 'pending'          # Ожидает настройки администратором
+    SETTING_UP = 'setting_up'    # В процессе настройки (взят в работу)
+    ACTIVE = 'active'            # Сервер активен и готов к работе
+    REJECTED = 'rejected'        # Отклонен администратором (средства возвращены)
+    CANCELLED = 'cancelled'      # Отменен пользователем
+    EXPIRED = 'expired'          # Срок аренды истек
+
+
+class DedicatedServerOrder(Base):
+    """Заказ персонального выделенного сервера (Dedicated VPS)."""
+
+    __tablename__ = 'dedicated_server_orders'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    status = Column(String(32), default=DedicatedServerStatus.PENDING.value, nullable=False, index=True)
+
+    country_code = Column(String(8), nullable=False)   # e.g. 'DE', 'NL', 'US', 'JP'
+    country_name = Column(String(64), nullable=False)   # e.g. 'Германия', 'США'
+    continent = Column(String(32), nullable=True)       # 'europe', 'north_america', 'asia'
+
+    deployment_type = Column(String(32), default='turnkey', nullable=False)  # 'turnkey' (под ключ) или 'byos' (свой сервер)
+    cpu_cores = Column(Integer, default=1, nullable=False)
+    ram_gb = Column(Integer, default=1, nullable=False)
+
+    period_days = Column(Integer, default=30, nullable=False)
+    amount_kopeks = Column(Integer, nullable=False)
+
+    # Дополнительные эксклюзивные опции (YouTube без рекламы, доступ к нейросетям)
+    options = Column(JSON, default=dict)  # e.g. {"youtube_no_ads": True, "ai_access": True}
+
+    # Назначенные администратором параметры
+    ip_address = Column(String(64), nullable=True)
+    squad_uuid = Column(String(255), nullable=True)  # UUID персонального сквада RemnaWave
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='SET NULL'), nullable=True)
+
+    # Скрипт для one-line настройки пользователем
+    setup_token = Column(String(64), unique=True, nullable=True, index=True)
+
+    admin_notes = Column(Text, nullable=True)
+    rejected_reason = Column(Text, nullable=True)
+
+    created_at = Column(AwareDateTime(), default=func.now(), nullable=False)
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now(), nullable=False)
+    expires_at = Column(AwareDateTime(), nullable=True)
+
+    user = relationship('User', backref='dedicated_server_orders')
+    subscription = relationship('Subscription', backref='dedicated_server_order')
+
+    @property
+    def is_active(self) -> bool:
+        return self.status == DedicatedServerStatus.ACTIVE.value
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status in (DedicatedServerStatus.PENDING.value, DedicatedServerStatus.SETTING_UP.value)
+

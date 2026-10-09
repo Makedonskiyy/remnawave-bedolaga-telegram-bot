@@ -34,6 +34,7 @@ from app.database.models import (
     User,
     WithdrawalRequest,
     WithdrawalRequestStatus,
+    DedicatedServerOrder,
 )
 from app.keyboards.group_callbacks import strip_group_unsafe_buttons
 from app.utils.formatters import format_username_link
@@ -2632,3 +2633,70 @@ class AdminNotificationService:
         except Exception as e:
             logger.error('Неожиданная ошибка при отправке уведомления о подозрительной активности', error=e)
             return False
+
+    async def send_dedicated_server_order_notification(
+        self,
+        db: AsyncSession,
+        order: DedicatedServerOrder,
+        user: User,
+    ) -> bool:
+        """
+        Отправляет уведомление администраторам о новом заказе выделенного сервера.
+        """
+        if not self._is_enabled():
+            return False
+
+        try:
+            user_display = self._get_user_display(user)
+            user_id_display = self._get_user_identifier_display(user)
+            price_rub = order.amount_kopeks / 100
+
+            options_text = []
+            options_dict = order.options or {}
+            if options_dict.get('ai_access'):
+                options_text.append('🤖 VIP AI Routing (Gemini/ChatGPT/Claude/Perplexity)')
+            if options_dict.get('youtube_no_ads'):
+                options_text.append('▶️ YouTube No-Ads (Smart DNS)')
+            if not options_text:
+                options_text.append('Базовый пакет')
+
+            addon_str = '\n'.join(f'  • {opt}' for opt in options_text)
+
+            message_lines = [
+                '🖥 <b>ЗАЯВКА НА ВЫДЕЛЕННЫЙ СЕРВЕР</b>',
+                '',
+                f'👤 <b>Пользователь:</b> {user_display}',
+                f'🆔 <b>ID:</b> <code>{user_id_display}</code>',
+                f'🏷 <b>Заказ:</b> <code>#{order.id}</code>',
+                f'🌍 <b>Локация:</b> {order.country_name} ({order.country_code})',
+                f'⚙️ <b>Конфигурация:</b> 1 vCPU / 1 GB RAM / Безлимитный трафик',
+                f'📆 <b>Срок:</b> {order.period_days} дней',
+                f'💰 <b>Оплачено:</b> {price_rub:.2f} ₽ (с баланса)',
+                f'✨ <b>VIP-опции:</b>\n{addon_str}',
+                f'📋 <b>Статус:</b> В обработке (ожидает настройки админом)',
+                '',
+                f'⏰ <i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M:%S")}</i>',
+            ]
+
+            keyboard = types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text='⚙️ Настроить в кабинете',
+                            url=f'{settings.cabinet_base_url}/admin/servers?order_id={order.id}'
+                            if hasattr(settings, 'cabinet_base_url') and settings.cabinet_base_url
+                            else 'https://t.me',
+                        )
+                    ]
+                ]
+            )
+
+            return await self._send_message(
+                '\n'.join(message_lines),
+                reply_markup=keyboard,
+                category=NotificationCategory.INFRASTRUCTURE,
+            )
+        except Exception as e:
+            logger.error('Ошибка отправки уведомления о заказе выделенного сервера', error=e, order_id=order.id)
+            return False
+
