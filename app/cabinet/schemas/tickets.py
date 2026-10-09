@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
 
 
-ALLOWED_MEDIA_TYPES = {'photo', 'video', 'document', 'voice'}
+ALLOWED_MEDIA_TYPES = {'photo', 'video', 'document', 'voice', 'audio'}
 MAX_MEDIA_ITEMS = 10
 
 
@@ -20,6 +20,8 @@ class TicketMediaItem(BaseModel):
 
     @model_validator(mode='after')
     def validate_type(self) -> 'TicketMediaItem':
+        if self.type == 'audio':
+            self.type = 'voice'
         if self.type not in ALLOWED_MEDIA_TYPES:
             raise ValueError(f'type must be one of: {sorted(ALLOWED_MEDIA_TYPES)}')
         return self
@@ -125,6 +127,8 @@ class TicketCreateRequest(BaseModel):
 
     @model_validator(mode='after')
     def validate_has_content(self) -> 'TicketCreateRequest':
+        if self.media_type == 'audio':
+            self.media_type = 'voice'
         _validate_media_bundle(self.media_type, self.media_file_id, self.media_items)
         has_text = bool(self.message.strip())
         has_media = bool(self.media_file_id) or bool(self.media_items)
@@ -144,6 +148,8 @@ class TicketMessageCreateRequest(BaseModel):
 
     @model_validator(mode='after')
     def validate_has_content(self) -> 'TicketMessageCreateRequest':
+        if self.media_type == 'audio':
+            self.media_type = 'voice'
         _validate_media_bundle(self.media_type, self.media_file_id, self.media_items)
         has_text = bool(self.message.strip())
         has_media = bool(self.media_file_id) or bool(self.media_items)

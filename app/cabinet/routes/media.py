@@ -24,7 +24,7 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/media', tags=['Cabinet Media'])
 
-ALLOWED_MEDIA_TYPES = {'photo', 'video', 'document', 'voice'}
+ALLOWED_MEDIA_TYPES = {'photo', 'video', 'document', 'voice', 'audio'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 # Only these raster image and safe audio types may be served INLINE from the cabinet origin.
@@ -191,13 +191,17 @@ async def upload_media(
     request: Request,
     user: User = Depends(get_current_cabinet_user),
     file: UploadFile = File(...),
-    media_type: str = Form('photo', description='File type: photo, video, or document'),
+    media_type: str = Form('photo', description='File type: photo, video, document, voice or audio'),
+    duration: float | None = Form(None, description='Optional recorded audio duration in seconds'),
 ):
     """
     Upload media file for use in ticket messages.
     Returns file_id that can be used when creating ticket or adding message.
     """
     media_type_normalized = (media_type or '').strip().lower()
+    if media_type_normalized == 'audio':
+        media_type_normalized = 'voice'
+
     if media_type_normalized not in ALLOWED_MEDIA_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -228,7 +232,20 @@ async def upload_media(
             )
     elif media_type_normalized == 'voice':
         declared_base = (file.content_type or '').split(';')[0].strip().lower()
-        if declared_base and not (declared_base.startswith('audio/') or declared_base == 'application/ogg'):
+        allowed_voice_types = {
+            'application/ogg',
+            'application/octet-stream',
+            'application/x-binary',
+            'video/webm',
+            'video/mp4',
+        }
+        is_audio = (
+            not declared_base
+            or declared_base.startswith('audio/')
+            or declared_base in allowed_voice_types
+            or (file.filename and file.filename.lower().endswith(('.ogg', '.oga', '.opus', '.webm', '.mp3', '.m4a', '.wav', '.aac', '.mp4')))
+        )
+        if not is_audio:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Invalid audio type. Allowed: audio files (OGG, Opus, WebM, MP3, etc.)',
@@ -267,25 +284,30 @@ async def upload_media(
             )
             media = message.video
         elif media_type_normalized == 'voice':
+            voice_filename = file.filename or 'voice.ogg'
+            if not voice_filename.endswith(('.ogg', '.opus', '.oga', '.webm', '.mp3', '.m4a', '.wav')):
+                voice_filename = f'{voice_filename}.ogg'
+
+            upload_voice = BufferedInputFile(file_bytes, filename=voice_filename)
             try:
                 message = await bot.send_voice(
                     chat_id=target_chat_id,
-                    voice=upload,
+                    voice=upload_voice,
                     disable_notification=True,
                 )
                 media = message.voice
             except Exception as voice_err:
                 logger.info('Could not send as native voice, falling back to audio/document', error=str(voice_err))
-                upload_retry = BufferedInputFile(file_bytes, filename=file.filename or 'voice.ogg')
+                upload_audio = BufferedInputFile(file_bytes, filename=voice_filename)
                 try:
                     message = await bot.send_audio(
                         chat_id=target_chat_id,
-                        audio=upload_retry,
+                        audio=upload_audio,
                         disable_notification=True,
                     )
                     media = message.audio
                 except Exception:
-                    upload_doc = BufferedInputFile(file_bytes, filename=file.filename or 'voice.ogg')
+                    upload_doc = BufferedInputFile(file_bytes, filename=voice_filename)
                     message = await bot.send_document(
                         chat_id=target_chat_id,
                         document=upload_doc,
@@ -308,7 +330,9 @@ async def upload_media(
 
         if media_type_normalized == 'voice':
             dur = getattr(media, 'duration', None)
-            if dur is not None and dur < 5:
+            eff_dur = duration if duration is not None else dur
+            # If duration is determined and strictly positive, check >= 5s threshold
+            if eff_dur is not None and 0 < eff_dur < 5:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail='Голосовое сообщение должно быть длительностью не менее 5 секунд',
