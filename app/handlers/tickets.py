@@ -193,7 +193,7 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
         pass
 
     """Обработать ввод сообщения тикета и создать тикет"""
-    # Поддержка фото: если прислали фото с подписью — берём caption, сохраняем file_id
+    # Поддержка фото и голосовых сообщений: если прислали медиа с подписью — берём caption, сохраняем file_id
     message_text = (message.text or message.caption or '').strip()
     media_type = None
     media_file_id = None
@@ -201,6 +201,10 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
     if message.photo:
         media_type = 'photo'
         media_file_id = message.photo[-1].file_id
+        media_caption = message.caption
+    elif message.voice:
+        media_type = 'voice'
+        media_file_id = message.voice.file_id
         media_caption = message.caption
     # Глобальный блок
     from app.database.crud.ticket import TicketCRUD
@@ -230,14 +234,26 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
 
     # Удалим сообщение пользователя через 2 секунды
     asyncio.create_task(_try_delete_message_later(message.bot, message.chat.id, message.message_id, 2.0))
-    # Валидируем: допускаем пустой текст, если есть фото
-    if (not message_text or len(message_text) < 10) and not message.photo:
+    # Валидируем: допускаем пустой текст, если есть фото или голосовое сообщение
+    if (not message_text or len(message_text) < 10) and not (message.photo or message.voice):
         texts = get_texts(db_user.language)
         data_prompt = await state.get_data()
         prompt_chat_id = data_prompt.get('prompt_chat_id')
         prompt_message_id = data_prompt.get('prompt_message_id')
         err_text = texts.t(
-            'TICKET_MESSAGE_TOO_SHORT', 'Сообщение слишком короткое. Опишите проблему подробнее или отправьте фото:'
+            'TICKET_MESSAGE_TOO_SHORT', 'Сообщение слишком короткое. Опишите проблему подробнее или отправьте фото/голосовое сообщение:'
+        )
+        await _edit_or_send(message, prompt_chat_id, prompt_message_id, err_text, db_user.language)
+        return
+
+    # Проверка длительности голосового сообщения (не менее 5 секунд)
+    if message.voice and (message.voice.duration or 0) < 5:
+        texts = get_texts(db_user.language)
+        data_prompt = await state.get_data()
+        prompt_chat_id = data_prompt.get('prompt_chat_id')
+        prompt_message_id = data_prompt.get('prompt_message_id')
+        err_text = texts.t(
+            'TICKET_VOICE_TOO_SHORT', 'Голосовое сообщение слишком короткое. Длительность должна быть не менее 5 секунд:'
         )
         await _edit_or_send(message, prompt_chat_id, prompt_message_id, err_text, db_user.language)
         return
@@ -517,9 +533,16 @@ async def view_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         message_blocks.append(f'💬 Сообщения ({len(ticket.messages)}):\n\n')
         for msg in ticket.messages:
             sender = '👤 Вы' if msg.is_user_message else '🛠️ Поддержка'
-            block = f'{sender} ({format_local_datetime(msg.created_at, "%d.%m %H:%M")}):\n{html.escape(msg.message_text or "")}\n\n'
-            if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) == 'photo':
-                block += '📎 Вложение: фото\n\n'
+            block = f'{sender} ({format_local_datetime(msg.created_at, "%d.%m %H:%M")}):\n'
+            if msg.message_text:
+                block += f'{html.escape(msg.message_text)}\n\n'
+            if getattr(msg, 'has_media', False):
+                if getattr(msg, 'media_type', None) == 'photo':
+                    block += '📎 Вложение: фото\n\n'
+                elif getattr(msg, 'media_type', None) == 'voice':
+                    block += '🎤 Вложение: голосовое сообщение\n\n'
+            elif not msg.message_text:
+                block += '\n'
             message_blocks.append(block)
     pages = build_ticket_pages(header, message_blocks, max_len=TICKET_PAGE_MAX_LEN)
     total_pages = len(pages)
@@ -530,11 +553,12 @@ async def view_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         ticket.is_closed,
         db_user.language,
     )
-    # Если есть вложения фото — добавим кнопку для просмотра
-    has_photos = any(
-        getattr(m, 'has_media', False) and getattr(m, 'media_type', None) == 'photo' for m in ticket.messages or []
+    # Если есть вложения фото или голосовые — добавим кнопку для просмотра
+    has_attachments = any(
+        getattr(m, 'has_media', False) and getattr(m, 'media_type', None) in ('photo', 'voice')
+        for m in ticket.messages or []
     )
-    if has_photos:
+    if has_attachments:
         try:
             keyboard.inline_keyboard.insert(
                 0,
@@ -589,9 +613,22 @@ async def send_ticket_attachments(callback: types.CallbackQuery, db_user: User, 
         for m in ticket.messages
         if getattr(m, 'has_media', False) and getattr(m, 'media_type', None) == 'photo' and m.media_file_id
     ]
-    if not photos:
+    voices = [
+        m.media_file_id
+        for m in ticket.messages
+        if getattr(m, 'has_media', False) and getattr(m, 'media_type', None) == 'voice' and m.media_file_id
+    ]
+    if not photos and not voices:
         await callback.answer(texts.t('NO_ATTACHMENTS', 'Вложений нет.'), show_alert=True)
         return
+
+    # Отправляем голосовые сообщения
+    last_voice_msg = None
+    for vid in voices:
+        try:
+            last_voice_msg = await callback.message.bot.send_voice(chat_id=callback.from_user.id, voice=vid)
+        except Exception as e:
+            logger.warning('Failed to send ticket voice attachment', error=e)
 
     # Telegram ограничивает media group до 10 элементов. Отправим чанками.
     from aiogram.types import InputMediaPhoto
@@ -606,14 +643,16 @@ async def send_ticket_attachments(callback: types.CallbackQuery, db_user: User, 
                 last_group_message = messages[-1]
         except Exception:
             pass
-    if last_group_message:
+
+    anchor_message = last_group_message or last_voice_msg
+    if anchor_message:
         try:
             kb = types.InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
                             text=texts.t('DELETE_MESSAGE', '🗑 Удалить'),
-                            callback_data=f'user_delete_message_{last_group_message.message_id}',
+                            callback_data=f'user_delete_message_{anchor_message.message_id}',
                         )
                     ]
                 ]
@@ -737,7 +776,7 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
         logger.debug('Антиспам ответа на тикет: состояние не обновлено', error=str(exc))
 
     """Обработать ответ на тикет"""
-    # Поддержка фото для ответа пользователя
+    # Поддержка фото и голосовых сообщений для ответа пользователя
     reply_text = (message.text or message.caption or '').strip()
     media_type = None
     media_file_id = None
@@ -746,11 +785,25 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
         media_type = 'photo'
         media_file_id = message.photo[-1].file_id
         media_caption = message.caption
+    elif message.voice:
+        media_type = 'voice'
+        media_file_id = message.voice.file_id
+        media_caption = message.caption
 
-    if len(reply_text) < 5:
+    if len(reply_text) < 5 and not (message.photo or message.voice):
         texts = get_texts(db_user.language)
         await message.answer(
             texts.t('TICKET_REPLY_TOO_SHORT', 'Ответ должен содержать минимум 5 символов. Попробуйте еще раз:')
+        )
+        return
+
+    # Проверка длительности голосового сообщения (не менее 5 секунд)
+    if message.voice and (message.voice.duration or 0) < 5:
+        texts = get_texts(db_user.language)
+        await message.answer(
+            texts.t(
+                'TICKET_VOICE_TOO_SHORT', 'Голосовое сообщение слишком короткое. Длительность должна быть не менее 5 секунд:'
+            )
         )
         return
 
@@ -1035,6 +1088,8 @@ async def notify_admins_about_new_ticket(ticket: Ticket, db: AsyncSession):
             msg_text = (first_message.message_text or '').strip()
             if msg_text:
                 message_preview = preview_text(msg_text)
+            elif media_type == 'voice':
+                message_preview = '🎤 Голосовое сообщение'
 
         safe_title = html.escape(title) if title else '—'
 
@@ -1102,6 +1157,8 @@ async def notify_admins_about_ticket_reply(
         username_display = format_username_link(user.username if user else None, 'отсутствует')
 
         reply_preview = preview_text(reply_text)
+        if not reply_preview and media_type == 'voice':
+            reply_preview = '🎤 Голосовое сообщение'
         safe_title = html.escape(title) if title else '—'
 
         notification_text = (

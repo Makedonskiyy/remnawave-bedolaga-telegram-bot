@@ -345,11 +345,13 @@ def is_user_not_found_error(error: RemnaWaveAPIError) -> bool:
     error_code = _panel_error_code(error)
     if error_code in USER_NOT_FOUND_ERROR_CODES:
         return True
+    if _panel_error_message(error) in USER_NOT_FOUND_MESSAGES:
+        return True
     if error_code:
         return False
     if error.status_code != 404:
         return False
-    return _panel_error_message(error) in USER_NOT_FOUND_MESSAGES
+    return False
 
 
 def is_stale_external_squad_error(error: RemnaWaveAPIError) -> bool:
@@ -672,7 +674,7 @@ class RemnaWaveAPI:
                         # → None, delete → success, sync → пересоздание). Логировать его как error
                         # нельзя: error-логи буферизуются и сыплют отчётом в админ-чат (например, при
                         # просмотре юзера с протухшим panel uuid — A063). Понижаем до warning.
-                        is_not_found = response.status == 404
+                        is_not_found = response.status == 404 or 'user not found' in error_lower
                         log = (
                             logger.warning
                             if response.status in (502, 503, 504) or is_harmless or is_not_found
@@ -1002,7 +1004,8 @@ class RemnaWaveAPI:
                 # «User not found» — не error: как и 404 в _make_request, его
                 # обрабатывает вызывающий код (пересоздание пользователя), а
                 # error-логи буферизуются и сыплют отчётом в админ-чат.
-                log = logger.warning if is_user_not_found_error(e) else logger.error
+                is_unf = is_user_not_found_error(e) or 'user not found' in str(e).lower()
+                log = logger.warning if is_unf else logger.error
                 log('PATCH /api/users FAILED — full payload', payload=data)
                 raise
         user = self._parse_user(response['response'])

@@ -418,12 +418,13 @@ async def add_ticket_message(
 
     # Уведомить админов в кабинете
     try:
+        reply_preview = request.message or ('🎤 Голосовое сообщение' if primary_type == 'voice' else '')
         notification = await TicketNotificationCRUD.create_admin_notification_for_user_reply(
-            db, ticket, request.message
+            db, ticket, reply_preview
         )
         if notification:
             # Отправить WebSocket уведомление
-            await notify_admins_ticket_reply(ticket.id, (request.message or '')[:100], user.id)
+            await notify_admins_ticket_reply(ticket.id, reply_preview[:100], user.id)
     except Exception as e:
         logger.error('Error creating cabinet notification for user reply', error=e)
 

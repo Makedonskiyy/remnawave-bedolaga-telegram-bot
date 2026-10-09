@@ -2123,6 +2123,8 @@ class Tariff(Base):
     description = Column(Text, nullable=True)
     display_order = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Тип тарифа: standard, whitelist (Белые списки с оплатой за ГБ)
+    tariff_type = Column(String(32), default='standard', server_default='standard', nullable=False)
 
     # Параметры тарифа
     traffic_limit_gb = Column(Integer, nullable=False, default=100)  # 0 = безлимит
@@ -2216,6 +2218,11 @@ class Tariff(Base):
     subscriptions = relationship('Subscription', back_populates='tariff')
 
     @property
+    def is_whitelist(self) -> bool:
+        """Проверяет, является ли тариф тарифом типа 'Белые списки' (оплата за ГБ)."""
+        return self.tariff_type == 'whitelist'
+
+    @property
     def is_unlimited_traffic(self) -> bool:
         """Проверяет, безлимитный ли трафик."""
         return self.traffic_limit_gb == 0
@@ -2239,10 +2246,12 @@ class Tariff(Base):
         """
         if self.is_daily:
             return period_days <= 1
+        if self.is_whitelist and self.can_purchase_custom_traffic():
+            return True
         prices = self.period_prices or {}
         if prices.get(str(period_days)) is not None:
             return True
-        return self.can_purchase_custom_days() and self.get_price_for_custom_days(period_days) is not None
+        return bool(self.can_purchase_custom_days() and self.get_price_for_custom_days(period_days) is not None)
 
     @property
     def is_free(self) -> bool:
@@ -2352,7 +2361,7 @@ class Tariff(Base):
 
     def get_price_for_custom_traffic(self, gb: int) -> int | None:
         """Возвращает цену для произвольного количества трафика."""
-        if not self.custom_traffic_enabled or not self.traffic_price_per_gb_kopeks:
+        if not (self.custom_traffic_enabled or self.is_whitelist) or not self.traffic_price_per_gb_kopeks:
             return None
         if gb < self.min_traffic_gb or gb > self.max_traffic_gb:
             return None
@@ -2360,11 +2369,11 @@ class Tariff(Base):
 
     def can_purchase_custom_days(self) -> bool:
         """Проверяет, можно ли купить произвольное количество дней."""
-        return self.custom_days_enabled and self.price_per_day_kopeks > 0
+        return bool(self.custom_days_enabled and (self.price_per_day_kopeks or 0) > 0)
 
     def can_purchase_custom_traffic(self) -> bool:
         """Проверяет, можно ли купить произвольный трафик."""
-        return self.custom_traffic_enabled and self.traffic_price_per_gb_kopeks > 0
+        return bool((self.custom_traffic_enabled or self.is_whitelist) and (self.traffic_price_per_gb_kopeks or 0) > 0)
 
     def __repr__(self):
         return f"<Tariff(id={self.id}, name='{self.name}', tier={self.tier_level}, active={self.is_active})>"

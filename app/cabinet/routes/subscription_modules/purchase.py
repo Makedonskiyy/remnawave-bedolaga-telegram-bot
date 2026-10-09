@@ -281,6 +281,8 @@ async def _build_tariff_response(
         'id': tariff.id,
         'name': tariff.name,
         'description': tariff.description,
+        'tariff_type': getattr(tariff, 'tariff_type', 'standard') or 'standard',
+        'is_whitelist': getattr(tariff, 'is_whitelist', False),
         # Тариф отмечен оператором как выгодный: кабинет обводит карточку рамкой,
         # бот ставит подпись в кнопке списка.
         'is_highlighted': bool(tariff.is_highlighted),
@@ -732,11 +734,21 @@ async def purchase_tariff(
                 and tariff.get_price_for_custom_days(period_days) is not None
             )
 
-            if period_days not in available_periods and not custom_days_allowed:
+            # Тарифы типа «Белые списки» продаются за ГБ; период может быть не ограничен фиксированной ценой
+            whitelist_allowed = tariff.is_whitelist and (not available_periods or period_days in available_periods or period_days >= 1)
+
+            if period_days not in available_periods and not custom_days_allowed and not whitelist_allowed:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail='Selected period is not available for this tariff',
                 )
+
+        # Для тарифа «Белые списки» обязательно указание объема трафика
+        if tariff.is_whitelist and (request.traffic_gb is None or request.traffic_gb <= 0):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Для тарифа с оплатой за трафик (Белые списки) необходимо указать количество ГБ (traffic_gb)',
+            )
 
         # Determine traffic limit (custom traffic support)
         traffic_limit_gb = tariff.traffic_limit_gb
@@ -841,6 +853,7 @@ async def purchase_tariff(
             price_kopeks <= 0
             and result.original_total <= 0
             and not is_daily_tariff
+            and not (tariff.is_whitelist and custom_traffic_gb is not None and custom_traffic_gb > 0)
             and not tariff.has_configured_price_for_period(period_days)
         ):
             raise HTTPException(

@@ -251,6 +251,8 @@ def _guess_media_type(filename: str | None, content_type: str | None, requested:
         return 'photo'
     if mime.startswith('video/'):
         return 'video'
+    if mime.startswith('audio/'):
+        return 'voice'
     return 'document'
 
 
@@ -1092,6 +1094,21 @@ async def _upload_to_telegram(upload: UploadTransfer) -> dict[str, Any]:
         elif upload.media_type == 'video':
             message = await bot.send_video(chat_id=target_chat_id, video=input_file, disable_notification=True)
             media = message.video
+        elif upload.media_type == 'voice':
+            try:
+                message = await bot.send_voice(chat_id=target_chat_id, voice=input_file, disable_notification=True)
+                media = message.voice
+            except Exception as voice_err:
+                logger.info('Support WS: send_voice failed, falling back to audio/document', error=str(voice_err))
+                raw_bytes = bytes(upload.chunks)
+                upload_retry = BufferedInputFile(raw_bytes, filename=upload.file_name or 'voice.ogg')
+                try:
+                    message = await bot.send_audio(chat_id=target_chat_id, audio=upload_retry, disable_notification=True)
+                    media = message.audio
+                except Exception:
+                    upload_doc = BufferedInputFile(raw_bytes, filename=upload.file_name or 'voice.ogg')
+                    message = await bot.send_document(chat_id=target_chat_id, document=upload_doc, disable_notification=True)
+                    media = message.document
         else:
             message = await bot.send_document(chat_id=target_chat_id, document=input_file, disable_notification=True)
             media = message.document

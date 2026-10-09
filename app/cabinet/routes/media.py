@@ -24,15 +24,25 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/media', tags=['Cabinet Media'])
 
-ALLOWED_MEDIA_TYPES = {'photo', 'video', 'document'}
+ALLOWED_MEDIA_TYPES = {'photo', 'video', 'document', 'voice'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
-# Only these raster image types may be served INLINE from the cabinet origin.
+# Only these raster image and safe audio types may be served INLINE from the cabinet origin.
 # Everything else — documents, SVG, HTML, XML, anything — is forced to download
 # as an opaque blob. User attachments are served from the app's own origin, so an
 # HTML/SVG file rendered inline would execute JS with access to the cabinet's
 # localStorage tokens (stored XSS → session/token theft).
 _SAFE_INLINE_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
+_SAFE_INLINE_AUDIO_TYPES = {
+    'audio/ogg',
+    'audio/opus',
+    'audio/webm',
+    'audio/mpeg',
+    'audio/mp4',
+    'audio/wav',
+    'audio/x-wav',
+    'audio/aac',
+}
 
 # Active/scriptable content rejected at upload time (defense in depth — the
 # download endpoint already forces these to download, but refuse them at the door).
@@ -70,12 +80,25 @@ def _sanitize_download_filename(filename: str) -> str:
 def _content_response_params(filename: str) -> tuple[str, dict[str, str]]:
     """Decide the safe Content-Type / disposition / hardening headers for a download.
 
-    Renders only a strict allow-list of raster images inline; forces everything
+    Renders only a strict allow-list of raster images and audio files inline; forces everything
     else to download as application/octet-stream. Adds nosniff + a locked-down CSP
     so a user file can never execute script in the cabinet origin.
     """
-    guessed_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
-    if guessed_type in _SAFE_INLINE_IMAGE_TYPES:
+    fn_lower = filename.lower()
+    if fn_lower.endswith(('.oga', '.ogg', '.opus')):
+        guessed_type = 'audio/ogg'
+    elif fn_lower.endswith('.mp3'):
+        guessed_type = 'audio/mpeg'
+    elif fn_lower.endswith('.webm'):
+        guessed_type = 'audio/webm'
+    elif fn_lower.endswith(('.m4a', '.mp4')):
+        guessed_type = 'audio/mp4'
+    elif fn_lower.endswith('.wav'):
+        guessed_type = 'audio/wav'
+    else:
+        guessed_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+
+    if guessed_type in _SAFE_INLINE_IMAGE_TYPES or guessed_type in _SAFE_INLINE_AUDIO_TYPES:
         media_type = guessed_type
         disposition = 'inline'
     else:
@@ -89,9 +112,9 @@ def _content_response_params(filename: str) -> tuple[str, dict[str, str]]:
         'Cache-Control': 'private, no-store',
         # Never let the browser MIME-sniff a blob back into HTML/JS.
         'X-Content-Type-Options': 'nosniff',
-        # Belt-and-braces: even if a renderable type slipped through, sandbox it
-        # (no scripts, no network) so it can't touch the app origin.
-        'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; sandbox",
+        # Belt-and-braces: allow safe images and media playback, sandbox everything
+        'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; media-src 'self' data:; sandbox",
+        'Accept-Ranges': 'bytes',
     }
     return media_type, headers
 
@@ -195,13 +218,20 @@ async def upload_media(
             detail=f'File too large. Maximum size: {MAX_FILE_SIZE // 1024 // 1024}MB',
         )
 
-    # Validate content type for photos
+    # Validate content type for photos and voices
     if media_type_normalized == 'photo':
         allowed_image_types = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
         if file.content_type and file.content_type not in allowed_image_types:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Invalid image type. Allowed: JPEG, PNG, GIF, WebP',
+            )
+    elif media_type_normalized == 'voice':
+        declared_base = (file.content_type or '').split(';')[0].strip().lower()
+        if declared_base and not (declared_base.startswith('audio/') or declared_base == 'application/ogg'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Invalid audio type. Allowed: audio files (OGG, Opus, WebM, MP3, etc.)',
             )
 
     # Reject active/scriptable content for ALL upload types (defense in depth).
@@ -236,6 +266,32 @@ async def upload_media(
                 disable_notification=True,
             )
             media = message.video
+        elif media_type_normalized == 'voice':
+            try:
+                message = await bot.send_voice(
+                    chat_id=target_chat_id,
+                    voice=upload,
+                    disable_notification=True,
+                )
+                media = message.voice
+            except Exception as voice_err:
+                logger.info('Could not send as native voice, falling back to audio/document', error=str(voice_err))
+                upload_retry = BufferedInputFile(file_bytes, filename=file.filename or 'voice.ogg')
+                try:
+                    message = await bot.send_audio(
+                        chat_id=target_chat_id,
+                        audio=upload_retry,
+                        disable_notification=True,
+                    )
+                    media = message.audio
+                except Exception:
+                    upload_doc = BufferedInputFile(file_bytes, filename=file.filename or 'voice.ogg')
+                    message = await bot.send_document(
+                        chat_id=target_chat_id,
+                        document=upload_doc,
+                        disable_notification=True,
+                    )
+                    media = message.document
         else:
             message = await bot.send_document(
                 chat_id=target_chat_id,
@@ -249,6 +305,14 @@ async def upload_media(
             await bot.delete_message(chat_id=target_chat_id, message_id=message.message_id)
         except Exception:
             pass  # Best-effort cleanup — file_id is already captured
+
+        if media_type_normalized == 'voice':
+            dur = getattr(media, 'duration', None)
+            if dur is not None and dur < 5:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Голосовое сообщение должно быть длительностью не менее 5 секунд',
+                )
 
         media_url = _build_media_url(request, media.file_id)
 

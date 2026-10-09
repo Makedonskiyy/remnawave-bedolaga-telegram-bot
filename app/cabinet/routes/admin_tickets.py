@@ -92,7 +92,7 @@ class AdminReplyRequest(BaseModel):
     """Admin reply to ticket."""
 
     message: str = Field(default='', max_length=4000, description='Reply message')
-    media_type: str | None = Field(None, description='Media type: photo, video, or document')
+    media_type: str | None = Field(None, description='Media type: photo, video, document, or voice')
     media_file_id: str | None = Field(None, max_length=255, description='Telegram file_id from media upload')
     media_caption: str | None = Field(None, max_length=1000, description='Caption for media')
     media_items: list[TicketMediaItem] | None = Field(None, description='Multi-media gallery attachments')
@@ -513,11 +513,12 @@ async def reply_to_ticket(
     # Уведомить пользователя в кабинете
     try:
         notification = await TicketNotificationCRUD.create_user_notification_for_admin_reply(
-            db, ticket, request.message
+            db, ticket, request.message or ('🎤 Голосовое сообщение' if primary_type == 'voice' else '')
         )
         if notification:
             # Отправить WebSocket уведомление
-            await notify_user_ticket_reply(ticket.user_id, ticket.id, (request.message or '')[:100])
+            reply_preview = (request.message or ('🎤 Голосовое сообщение' if primary_type == 'voice' else ''))[:100]
+            await notify_user_ticket_reply(ticket.user_id, ticket.id, reply_preview)
     except Exception as e:
         logger.warning('Failed to create cabinet notification for admin reply', error=e)
 

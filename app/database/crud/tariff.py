@@ -183,6 +183,7 @@ async def create_tariff(
     name: str,
     *,
     description: str | None = None,
+    tariff_type: str = 'standard',
     display_order: int = 0,
     is_active: bool = True,
     traffic_limit_gb: int = 100,
@@ -232,6 +233,7 @@ async def create_tariff(
     tariff = Tariff(
         name=name.strip(),
         description=description.strip() if description else None,
+        tariff_type=tariff_type or 'standard',
         display_order=max(0, display_order),
         is_active=is_active,
         traffic_limit_gb=max(0, traffic_limit_gb),
@@ -305,6 +307,7 @@ async def update_tariff(
     *,
     name: str | None = None,
     description: str | None = None,
+    tariff_type: str | None = None,
     display_order: int | None = None,
     is_active: bool | None = None,
     traffic_limit_gb: int | None = None,
@@ -355,6 +358,8 @@ async def update_tariff(
         tariff.display_order = max(0, display_order)
     if is_active is not None:
         tariff.is_active = is_active
+    if tariff_type is not None:
+        tariff.tariff_type = tariff_type
     if traffic_limit_gb is not None:
         tariff.traffic_limit_gb = max(0, traffic_limit_gb)
     if device_limit is not None:

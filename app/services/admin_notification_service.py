@@ -2492,11 +2492,56 @@ class AdminNotificationService:
             )
             return False
 
-        # Если есть медиа, отправляем фото с текстом как caption (если влезает) или текст + фото
+        # Если есть медиа, отправляем фото/голос с текстом как caption (если влезает) или текст + медиа
         if media_file_id and media_type == 'photo':
             return await self._send_ticket_photo_notification(text, media_file_id, keyboard)
+        elif media_file_id and media_type == 'voice':
+            return await self._send_ticket_voice_notification(text, media_file_id, keyboard)
 
         return await self._send_message(text, reply_markup=keyboard, category=NotificationCategory.TICKETS)
+
+    async def _send_ticket_voice_notification(
+        self,
+        text: str,
+        voice_file_id: str,
+        keyboard: types.InlineKeyboardMarkup | None = None,
+    ) -> bool:
+        """Отправить голосовое сообщение с текстом в тикет-топик.
+        Если текст помещается в caption (≤1024 символов после парсинга HTML) — voice с caption.
+        Иначе — сначала текст, потом voice в тот же топик.
+        """
+        if not self.chat_id:
+            return False
+
+        thread_id = self._resolve_topic_id(category=NotificationCategory.TICKETS)
+
+        try:
+            if not caption_exceeds_telegram_limit(text):
+                voice_kwargs: dict = {
+                    'chat_id': self.chat_id,
+                    'voice': voice_file_id,
+                    'caption': text,
+                    'parse_mode': 'HTML',
+                }
+                if thread_id:
+                    voice_kwargs['message_thread_id'] = thread_id
+                if keyboard:
+                    voice_kwargs['reply_markup'] = keyboard
+                await self.bot.send_voice(**voice_kwargs)
+            else:
+                await self._send_message(text, reply_markup=keyboard, category=NotificationCategory.TICKETS)
+                voice_kwargs = {
+                    'chat_id': self.chat_id,
+                    'voice': voice_file_id,
+                }
+                if thread_id:
+                    voice_kwargs['message_thread_id'] = thread_id
+                await self.bot.send_voice(**voice_kwargs)
+
+            return True
+        except Exception as e:
+            logger.error('Ошибка отправки голосового уведомления тикета', error=e)
+            return await self._send_message(text, reply_markup=keyboard, category=NotificationCategory.TICKETS)
 
     async def _send_ticket_photo_notification(
         self,

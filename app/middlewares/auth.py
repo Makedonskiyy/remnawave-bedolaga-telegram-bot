@@ -46,7 +46,13 @@ async def _refresh_remnawave_description(remnawave_id: int, description: str, te
     except Exception as remnawave_error:
         from app.external.remnawave_api import is_user_not_found_error
 
-        if is_user_not_found_error(remnawave_error):
+        err_text = str(remnawave_error).lower()
+        if (
+            is_user_not_found_error(remnawave_error)
+            or 'user not found' in err_text
+            or 'not found' in err_text
+            or getattr(remnawave_error, 'status_code', None) == 404
+        ):
             logger.warning(
                 'ℹ️ [Middleware] Пользователь не найден в панели RemnaWave (возможно, аккаунт был удалён)',
                 telegram_id=telegram_id,

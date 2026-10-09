@@ -5,14 +5,14 @@ from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
 
 
-ALLOWED_MEDIA_TYPES = {'photo', 'video', 'document'}
+ALLOWED_MEDIA_TYPES = {'photo', 'video', 'document', 'voice'}
 MAX_MEDIA_ITEMS = 10
 
 
 class TicketMediaItem(BaseModel):
     """Single media attachment in a ticket message."""
 
-    type: str = Field(..., description='Media type: photo, video, or document')
+    type: str = Field(..., description='Media type: photo, video, document, or voice')
     file_id: str = Field(..., max_length=255, description='Telegram file_id')
     caption: str | None = Field(None, max_length=1000, description='Optional caption')
     # Response-only: signed, expiring download token. Ignored on request bodies.
@@ -118,7 +118,7 @@ class TicketCreateRequest(BaseModel):
 
     title: str = Field(..., min_length=3, max_length=255, description='Ticket title')
     message: str = Field(default='', max_length=4000, description='Initial message')
-    media_type: str | None = Field(None, description='Media type: photo, video, document')
+    media_type: str | None = Field(None, description='Media type: photo, video, document, or voice')
     media_file_id: str | None = Field(None, description='Telegram file_id of uploaded media')
     media_caption: str | None = Field(None, max_length=1000, description='Media caption')
     media_items: list[TicketMediaItem] | None = Field(None, description='Multi-media attachments')
@@ -137,7 +137,7 @@ class TicketMessageCreateRequest(BaseModel):
     """Request to add message to ticket."""
 
     message: str = Field(default='', max_length=4000, description='Message text')
-    media_type: str | None = Field(None, description='Media type: photo, video, document')
+    media_type: str | None = Field(None, description='Media type: photo, video, document, or voice')
     media_file_id: str | None = Field(None, description='Telegram file_id of uploaded media')
     media_caption: str | None = Field(None, max_length=1000, description='Media caption')
     media_items: list[TicketMediaItem] | None = Field(None, description='Multi-media attachments')

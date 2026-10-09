@@ -130,6 +130,8 @@ async def list_tariffs(
                 name=tariff.name,
                 description=tariff.description,
                 is_active=tariff.is_active,
+                tariff_type=getattr(tariff, 'tariff_type', 'standard') or 'standard',
+                is_whitelist=getattr(tariff, 'is_whitelist', False),
                 is_trial_available=tariff.is_trial_available,
                 is_daily=tariff.is_daily,
                 daily_price_kopeks=tariff.daily_price_kopeks,
@@ -241,6 +243,8 @@ async def get_tariff(
         name=tariff.name,
         description=tariff.description,
         is_active=tariff.is_active,
+        tariff_type=getattr(tariff, 'tariff_type', 'standard') or 'standard',
+        is_whitelist=getattr(tariff, 'is_whitelist', False),
         is_trial_available=tariff.is_trial_available,
         allow_traffic_topup=tariff.allow_traffic_topup,
         traffic_topup_enabled=tariff.traffic_topup_enabled,
@@ -307,6 +311,7 @@ async def create_new_tariff(
         db=db,
         name=request.name,
         description=request.description,
+        tariff_type=request.tariff_type,
         is_active=request.is_active,
         allow_traffic_topup=request.allow_traffic_topup,
         traffic_topup_enabled=request.traffic_topup_enabled,
@@ -383,6 +388,8 @@ async def update_existing_tariff(
         updates['description'] = request.description
     if request.is_active is not None:
         updates['is_active'] = request.is_active
+    if request.tariff_type is not None:
+        updates['tariff_type'] = request.tariff_type
     if request.is_highlighted is not None:
         updates['is_highlighted'] = request.is_highlighted
     if request.allow_traffic_topup is not None:

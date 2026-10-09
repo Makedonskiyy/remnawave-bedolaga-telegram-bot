@@ -52,6 +52,8 @@ class TariffListItem(BaseModel):
     name: str
     description: str | None = None
     is_active: bool
+    tariff_type: str = 'standard'
+    is_whitelist: bool = False
     is_trial_available: bool
     # Тариф отмечен оператором как выгодный — выделяется в списке.
     is_highlighted: bool = False
@@ -88,6 +90,8 @@ class TariffDetailResponse(BaseModel):
     name: str
     description: str | None = None
     is_active: bool
+    tariff_type: str = 'standard'
+    is_whitelist: bool = False
     is_trial_available: bool
     is_highlighted: bool = False
     allow_traffic_topup: bool = True
@@ -155,6 +159,7 @@ class TariffCreateRequest(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
+    tariff_type: str = Field('standard', description="Tariff type: 'standard' or 'whitelist'")
     is_active: bool = True
     is_highlighted: bool = False
     allow_traffic_topup: bool = True
@@ -213,6 +218,7 @@ class TariffUpdateRequest(BaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
+    tariff_type: str | None = Field(None, description="Tariff type: 'standard' or 'whitelist'")
     is_active: bool | None = None
     is_highlighted: bool | None = None
     allow_traffic_topup: bool | None = None

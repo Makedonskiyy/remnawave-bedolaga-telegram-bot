@@ -240,9 +240,16 @@ async def view_admin_ticket(
         message_blocks.append(f'💬 Сообщения ({len(ticket.messages)}):\n\n')
         for msg in ticket.messages:
             sender = '👤 Пользователь' if msg.is_user_message else '🛠️ Поддержка'
-            block = f'{sender} ({format_local_datetime(msg.created_at, "%d.%m %H:%M")}):\n{html.escape(msg.message_text or "")}\n\n'
-            if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) == 'photo':
-                block += '📎 Вложение: фото\n\n'
+            block = f'{sender} ({format_local_datetime(msg.created_at, "%d.%m %H:%M")}):\n'
+            if msg.message_text:
+                block += f'{html.escape(msg.message_text)}\n\n'
+            if getattr(msg, 'has_media', False):
+                if getattr(msg, 'media_type', None) == 'photo':
+                    block += '📎 Вложение: фото\n\n'
+                elif getattr(msg, 'media_type', None) == 'voice':
+                    block += '🎤 Вложение: голосовое сообщение\n\n'
+            elif not msg.message_text:
+                block += '\n'
             message_blocks.append(block)
 
     # Разбиваем на страницы
@@ -251,8 +258,9 @@ async def view_admin_ticket(
     page = total_pages if page is None else min(page, total_pages)
 
     # Формируем клавиатуру
-    has_photos = any(
-        getattr(m, 'has_media', False) and getattr(m, 'media_type', None) == 'photo' for m in ticket.messages or []
+    has_attachments = any(
+        getattr(m, 'has_media', False) and getattr(m, 'media_type', None) in ('photo', 'voice')
+        for m in ticket.messages or []
     )
     keyboard = get_admin_ticket_view_keyboard(
         ticket_id, ticket.is_closed, db_user.language, is_user_blocked=ticket.is_user_reply_blocked
@@ -283,7 +291,7 @@ async def view_admin_ticket(
         pass
 
     # Кнопка вложений
-    if has_photos:
+    if has_attachments:
         try:
             keyboard.inline_keyboard.insert(
                 0,
@@ -386,7 +394,7 @@ async def handle_admin_ticket_reply(message: types.Message, state: FSMContext, d
         pass
 
     """Обработать ответ админа на тикет"""
-    # Поддержка фото вложений в ответе админа
+    # Поддержка фото и голосовых вложений в ответе админа
     reply_text = (message.text or message.caption or '').strip()
     media_type = None
     media_file_id = None
@@ -394,6 +402,10 @@ async def handle_admin_ticket_reply(message: types.Message, state: FSMContext, d
     if message.photo:
         media_type = 'photo'
         media_file_id = message.photo[-1].file_id
+        media_caption = message.caption
+    elif message.voice:
+        media_type = 'voice'
+        media_file_id = message.voice.file_id
         media_caption = message.caption
 
     if len(reply_text) < 1 and not media_file_id:
@@ -838,9 +850,15 @@ async def handle_admin_block_duration_input(message: types.Message, state: FSMCo
                 for msg in updated.messages:
                     sender = '👤 Пользователь' if msg.is_user_message else '🛠️ Поддержка'
                     ticket_text += f'{sender} ({format_local_datetime(msg.created_at, "%d.%m %H:%M")}):\n'
-                    ticket_text += f'{html.escape(msg.message_text)}\n\n'
-                    if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) == 'photo':
-                        ticket_text += '📎 Вложение: фото\n\n'
+                    if msg.message_text:
+                        ticket_text += f'{html.escape(msg.message_text)}\n\n'
+                    if getattr(msg, 'has_media', False):
+                        if getattr(msg, 'media_type', None) == 'photo':
+                            ticket_text += '📎 Вложение: фото\n\n'
+                        elif getattr(msg, 'media_type', None) == 'voice':
+                            ticket_text += '🎤 Вложение: голосовое сообщение\n\n'
+                    elif not msg.message_text:
+                        ticket_text += '\n'
 
             kb = get_admin_ticket_view_keyboard(
                 updated.id, updated.is_closed, db_user.language, is_user_blocked=updated.is_user_reply_blocked
@@ -868,11 +886,11 @@ async def handle_admin_block_duration_input(message: types.Message, state: FSMCo
                         kb.inline_keyboard.insert(0, buttons_row)
             except Exception:
                 pass
-            has_photos = any(
-                getattr(m, 'has_media', False) and getattr(m, 'media_type', None) == 'photo'
+            has_attachments = any(
+                getattr(m, 'has_media', False) and getattr(m, 'media_type', None) in ('photo', 'voice')
                 for m in updated.messages or []
             )
-            if has_photos:
+            if has_attachments:
                 try:
                     kb.inline_keyboard.insert(
                         0,
@@ -1094,6 +1112,12 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
         chat_id = int(user.telegram_id)
         texts = get_texts(user.language)
 
+        last_message = await TicketMessageCRUD.get_last_message(db, ticket.id)
+
+        preview = reply_text
+        if not preview and last_message and getattr(last_message, 'media_type', None) == 'voice':
+            preview = '🎤 Голосовое сообщение'
+
         # Формируем уведомление. Превью экранируем ПОСЛЕ обрезки: бот шлёт с
         # parse_mode=HTML, и угловая скобка в ответе поддержки («откройте
         # <config>») ломает разбор — уведомление не доходит вовсе. Экранировать
@@ -1101,7 +1125,7 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
         base_text = texts.t(
             'TICKET_REPLY_NOTIFICATION',
             '🎫 Получен ответ по тикету #{ticket_id}\n\n{reply_preview}\n\nНажмите кнопку ниже, чтобы перейти к тикету:',
-        ).format(ticket_id=ticket.id, reply_preview=html.escape(preview_text(reply_text)))
+        ).format(ticket_id=ticket.id, reply_preview=html.escape(preview_text(preview)))
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -1118,32 +1142,49 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
             ]
         )
 
-        # Если было фото в последнем ответе админа — отправим как фото
-        last_message = await TicketMessageCRUD.get_last_message(db, ticket.id)
+        # Если было фото или голос в последнем ответе админа — отправим с медиа
         if (
             last_message
             and last_message.has_media
-            and last_message.media_type == 'photo'
             and last_message.is_from_admin
         ):
-            caption = base_text
-            try:
-                await bot.send_photo(
-                    chat_id=chat_id,
-                    photo=last_message.media_file_id,
-                    caption=caption,
-                    reply_markup=keyboard,
-                )
-                return
-            except TelegramBadRequest as photo_error:
-                logger.error(
-                    'Не удалось отправить фото-уведомление пользователю для тикета',
-                    chat_id=chat_id,
-                    ticket_id=ticket.id,
-                    photo_error=photo_error,
-                )
-            except Exception as e:
-                logger.error('Не удалось отправить фото-уведомление', error=e)
+            if last_message.media_type == 'photo':
+                caption = base_text
+                try:
+                    await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=last_message.media_file_id,
+                        caption=caption,
+                        reply_markup=keyboard,
+                    )
+                    return
+                except TelegramBadRequest as photo_error:
+                    logger.error(
+                        'Не удалось отправить фото-уведомление пользователю для тикета',
+                        chat_id=chat_id,
+                        ticket_id=ticket.id,
+                        photo_error=photo_error,
+                    )
+                except Exception as e:
+                    logger.error('Не удалось отправить фото-уведомление', error=e)
+            elif last_message.media_type == 'voice':
+                try:
+                    await bot.send_voice(
+                        chat_id=chat_id,
+                        voice=last_message.media_file_id,
+                        caption=base_text,
+                        reply_markup=keyboard,
+                    )
+                    return
+                except TelegramBadRequest as voice_error:
+                    logger.error(
+                        'Не удалось отправить голосовое уведомление пользователю для тикета',
+                        chat_id=chat_id,
+                        ticket_id=ticket.id,
+                        voice_error=voice_error,
+                    )
+                except Exception as e:
+                    logger.error('Не удалось отправить голосовое уведомление', error=e)
         # Фоллбек: текстовое уведомление
         await bot.send_message(
             chat_id=chat_id,
@@ -1212,9 +1253,23 @@ def register_handlers(dp: Dispatcher):
             for m in ticket.messages
             if getattr(m, 'has_media', False) and getattr(m, 'media_type', None) == 'photo' and m.media_file_id
         ]
-        if not photos:
+        voices = [
+            m.media_file_id
+            for m in ticket.messages
+            if getattr(m, 'has_media', False) and getattr(m, 'media_type', None) == 'voice' and m.media_file_id
+        ]
+        if not photos and not voices:
             await callback.answer(texts.t('NO_ATTACHMENTS', 'Вложений нет.'), show_alert=True)
             return
+
+        # Отправляем голосовые сообщения
+        last_voice_msg = None
+        for vid in voices:
+            try:
+                last_voice_msg = await callback.message.bot.send_voice(chat_id=callback.from_user.id, voice=vid)
+            except Exception as e:
+                logger.warning('Failed to send admin ticket voice attachment', error=e)
+
         from aiogram.types import InputMediaPhoto
 
         chunks = [photos[i : i + 10] for i in range(0, len(photos), 10)]
@@ -1227,15 +1282,15 @@ def register_handlers(dp: Dispatcher):
                     last_group_message = messages[-1]
             except Exception:
                 pass
-        # После отправки добавим кнопку удалить под последним сообщением группы
-        if last_group_message:
+        anchor_message = last_group_message or last_voice_msg
+        if anchor_message:
             try:
                 kb = types.InlineKeyboardMarkup(
                     inline_keyboard=[
                         [
                             types.InlineKeyboardButton(
                                 text=texts.t('DELETE_MESSAGE', '🗑 Удалить'),
-                                callback_data=f'admin_delete_message_{last_group_message.message_id}',
+                                callback_data=f'admin_delete_message_{anchor_message.message_id}',
                             )
                         ]
                     ]
