@@ -57,6 +57,10 @@ def _subscription_to_list_item(sub) -> SubscriptionListItem:
     tariff_name = None
     if sub.tariff:
         tariff_name = sub.tariff.name
+    elif getattr(sub, 'is_dedicated_server', False):
+        orders = getattr(sub, 'dedicated_server_orders', None)
+        order = orders[0] if orders else None
+        tariff_name = f'Личный сервер ({order.country_name})' if order else 'Личный сервер'
 
     return SubscriptionListItem(
         id=sub.id,

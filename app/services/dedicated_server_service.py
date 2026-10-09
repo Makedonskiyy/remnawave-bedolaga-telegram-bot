@@ -374,45 +374,95 @@ class DedicatedServerService:
         order.status = DedicatedServerStatus.ACTIVE.value
         order.expires_at = datetime.now(UTC) + timedelta(days=order.period_days)
 
-        # Создаем персональную подписку (unlimited traffic = 0, unlimited devices = 999)
-        subscription = await create_paid_subscription(
-            db=db,
-            user_id=order.user_id,
-            duration_days=order.period_days,
-            traffic_limit_gb=0,  # unmetered
-            device_limit=999,    # unlimited
-            connected_squads=[squad_uuid.strip()],
-            commit=True,
-        )
-        order.subscription_id = subscription.id
+        # Создаем или обновляем персональную подписку (unlimited traffic = 0, unlimited devices = 999)
+        subscription = None
+        if order.subscription_id:
+            sub_res = await db.execute(select(Subscription).where(Subscription.id == order.subscription_id))
+            subscription = sub_res.scalar_one_or_none()
+
+        if not subscription:
+            subscription = await create_paid_subscription(
+                db=db,
+                user_id=order.user_id,
+                duration_days=order.period_days,
+                traffic_limit_gb=0,  # unmetered
+                device_limit=999,    # unlimited
+                connected_squads=[squad_uuid.strip()],
+                commit=True,
+            )
+            order.subscription_id = subscription.id
+        else:
+            subscription.connected_squads = [squad_uuid.strip()]
+            subscription.traffic_limit_gb = 0
+            subscription.device_limit = 999
+            subscription.end_date = order.expires_at
 
         # Синхронизируем с RemnaWave для получения ссылки
         sub_service = SubscriptionService()
+        remna_user = None
         try:
-            await sub_service.sync_subscription_with_remnawave(db, subscription)
+            remna_user = await sub_service.sync_remnawave_user(db, subscription)
+            if remna_user and getattr(remna_user, 'subscription_url', None):
+                subscription.subscription_url = remna_user.subscription_url
         except Exception as sync_err:
             logger.warning('Синхронизация подписки личного сервера с RemnaWave вернула ошибку', error=str(sync_err))
 
         await db.commit()
+        await db.refresh(subscription)
         await db.refresh(order)
 
         # Уведомление пользователю
         if bot and order.user and order.user.telegram_id:
             try:
-                sub_url = subscription.subscription_url or 'Доступно в личном кабинете'
+                from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+                from app.utils.miniapp_buttons import build_cabinet_url
+                from app.utils.subscription_utils import get_display_subscription_link
+
+                sub_url = (
+                    get_display_subscription_link(subscription)
+                    or subscription.subscription_url
+                    or (remna_user.subscription_url if remna_user else '')
+                    or ''
+                )
                 country = DedicatedServerService.get_country_by_code(order.country_code)
                 flag = country['flag'] if country else '🌐'
-                user_text = (
-                    f'🚀 <b>Ваш персональный сервер готов к работе!</b>\n\n'
-                    f'{flag} <b>Локация:</b> {order.country_name} ({order.country_code})\n'
-                    f'🌐 <b>IP-адрес:</b> <code>{order.ip_address}</code>\n'
-                    f'📅 <b>Срок аренды:</b> {order.period_days} дн. (до {order.expires_at.strftime("%d.%m.%Y")})\n'
-                    f'♾️ <b>Лимиты:</b> Трафик без ограничений, устройства без ограничений\n\n'
-                    f'🔗 <b>Ваша персональная ссылка подписки:</b>\n'
-                    f'<code>{sub_url}</code>\n\n'
-                    f'<i>Скопируйте ссылку и добавьте в приложение Happ / v2rayNG / Hiddify / Streisand.</i>'
+
+                lines = [
+                    '🖥 <b>Персональный сервер готов к работе</b>\n',
+                    f'<b>Локация:</b> {flag} {order.country_name} ({order.country_code})',
+                    f'<b>IP-адрес:</b> <code>{order.ip_address}</code>',
+                    f'<b>Срок аренды:</b> {order.period_days} дн. (до {order.expires_at.strftime("%d.%m.%Y")})',
+                    '<b>Лимиты:</b> Без ограничений по трафику и устройствам',
+                ]
+                if sub_url:
+                    lines.append(f'\n<b>Ссылка подписки:</b>\n<code>{sub_url}</code>')
+
+                user_text = '\n'.join(lines)
+
+                keyboard_rows = []
+                if sub_url and sub_url.startswith(('http://', 'https://')):
+                    keyboard_rows.append([InlineKeyboardButton(text='Подключить', url=sub_url)])
+
+                cabinet_url = build_cabinet_url('/servers')
+                if not cabinet_url and settings.CABINET_URL:
+                    cabinet_url = settings.CABINET_URL.rstrip('/') + '/servers'
+
+                if cabinet_url:
+                    if settings.is_cabinet_mode():
+                        keyboard_rows.append([InlineKeyboardButton(text='Личный кабинет', web_app=WebAppInfo(url=cabinet_url))])
+                    else:
+                        keyboard_rows.append([InlineKeyboardButton(text='Личный кабинет', url=cabinet_url)])
+                else:
+                    keyboard_rows.append([InlineKeyboardButton(text='Мои серверы', callback_data='dedicated_servers_my')])
+
+                keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows) if keyboard_rows else None
+
+                await bot.send_message(
+                    chat_id=order.user.telegram_id,
+                    text=user_text,
+                    reply_markup=keyboard,
+                    parse_mode='HTML',
                 )
-                await bot.send_message(chat_id=order.user.telegram_id, text=user_text, parse_mode='HTML')
             except Exception as notify_err:
                 logger.warning('Не удалось отправить уведомление пользователю о готовности сервера', error=str(notify_err))
 

@@ -52,7 +52,14 @@ def _status_label(sub) -> str:
 
 def _format_subscription_line(sub, idx: int) -> str:
     """Format a single subscription for the list view."""
-    tariff_name = sub.tariff.name if sub.tariff else 'Подписка'
+    if sub.tariff:
+        tariff_name = sub.tariff.name
+    elif getattr(sub, 'is_dedicated_server', False):
+        orders = getattr(sub, 'dedicated_server_orders', None)
+        order = orders[0] if orders else None
+        tariff_name = f'Личный сервер ({order.country_name})' if order else 'Личный сервер'
+    else:
+        tariff_name = 'Подписка'
     emoji = _status_emoji(sub)
     label = _status_label(sub)
 
@@ -229,7 +236,14 @@ async def show_subscription_detail(
     # (e.g. 'subscription_autopay') can resolve the right subscription via FSM.
     await state.update_data(active_subscription_id=sub_id)
 
-    tariff_name = subscription.tariff.name if subscription.tariff else 'Подписка'
+    if subscription.tariff:
+        tariff_name = subscription.tariff.name
+    elif getattr(subscription, 'is_dedicated_server', False):
+        orders = getattr(subscription, 'dedicated_server_orders', None)
+        order = orders[0] if orders else None
+        tariff_name = f'Личный сервер ({order.country_name})' if order else 'Личный сервер'
+    else:
+        tariff_name = 'Подписка'
 
     # Traffic
     if subscription.traffic_limit_gb == 0:

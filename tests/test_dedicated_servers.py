@@ -309,3 +309,79 @@ def test_dedicated_server_route_order_no_conflict():
     servers_idx = prefixes.index('/admin/servers')
     assert dedicated_idx < servers_idx, f'Dedicated router ({dedicated_idx}) must precede servers router ({servers_idx})'
 
+
+def test_dedicated_server_is_not_legacy_subscription(monkeypatch):
+    """Verify dedicated server subscriptions are NOT flagged as legacy subscriptions requiring tariff selection."""
+    from app.config import Settings
+    from app.utils.legacy_subscription import is_legacy_subscription
+
+    monkeypatch.setattr(Settings, 'is_tariffs_mode', lambda self: True)
+
+    sub = MagicMock(spec=Subscription)
+    sub.is_trial = False
+    sub.tariff_id = None
+    sub.is_dedicated_server = True
+    sub.dedicated_server_orders = [MagicMock()]
+
+    assert is_legacy_subscription(sub) is False
+
+
+@pytest.mark.asyncio
+async def test_dedicated_server_assign_notification_and_sync():
+    """Verify assign_server calls sync_remnawave_user and sends rich notification without clunky text."""
+    db = AsyncMock()
+    order = DedicatedServerOrder(
+        id=42,
+        user_id=10,
+        status=DedicatedServerStatus.PENDING.value,
+        period_days=30,
+        country_code='DE',
+        country_name='Германия',
+    )
+    user = User(id=10, telegram_id=987654321)
+    order.user = user
+
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = order
+    db.execute.return_value = mock_res
+
+    bot = AsyncMock()
+    mock_sub = Subscription(id=100, user_id=10, subscription_url=None)
+    mock_remna_user = MagicMock(subscription_url='https://example.com/sub/token123')
+
+    with patch('app.services.dedicated_server_service.create_paid_subscription', AsyncMock(return_value=mock_sub)), \
+         patch('app.services.dedicated_server_service.SubscriptionService') as mock_sub_service_cls:
+        
+        mock_sub_service = mock_sub_service_cls.return_value
+        mock_sub_service.sync_remnawave_user = AsyncMock(return_value=mock_remna_user)
+
+        updated_order = await DedicatedServerService.assign_server(
+            db=db,
+            order_id=42,
+            ip_address='192.168.1.1',
+            squad_uuid='squad-uuid-test',
+            admin_notes='test note',
+            bot=bot,
+        )
+
+        assert updated_order.status == DedicatedServerStatus.ACTIVE.value
+        assert updated_order.ip_address == '192.168.1.1'
+        mock_sub_service.sync_remnawave_user.assert_awaited_once()
+
+        bot.send_message.assert_awaited_once()
+        call_kwargs = bot.send_message.call_args.kwargs
+        text = call_kwargs['text']
+
+        # Rich format checks
+        assert '🖥 <b>Персональный сервер готов к работе</b>' in text
+        assert '192.168.1.1' in text
+        assert 'https://example.com/sub/token123' in text
+        # Clunky text removed
+        assert 'Скопируйте ссылку и добавьте в приложение' not in text
+        assert 'Доступно в личном кабинете' not in text
+        # Keyboard has buttons
+        assert call_kwargs['reply_markup'] is not None
+        button_texts = [b.text for row in call_kwargs['reply_markup'].inline_keyboard for b in row]
+        assert 'Подключить' in button_texts
+
+

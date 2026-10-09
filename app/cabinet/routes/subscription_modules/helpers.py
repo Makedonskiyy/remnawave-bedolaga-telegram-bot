@@ -204,6 +204,11 @@ def _subscription_to_response(
             getattr(subscription.tariff, 'traffic_reset_mode', None) or settings.DEFAULT_TRAFFIC_RESET_STRATEGY
         )
 
+    if not tariff_name and getattr(subscription, 'is_dedicated_server', False):
+        orders = getattr(subscription, 'dedicated_server_orders', None)
+        order = orders[0] if orders else None
+        tariff_name = f'Личный сервер ({order.country_name})' if order else 'Личный сервер'
+
     # Calculate next daily charge time (24 hours after last charge)
     next_daily_charge_at = None
     if is_daily and not is_daily_paused:

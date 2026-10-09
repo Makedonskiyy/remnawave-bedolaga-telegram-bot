@@ -21,4 +21,11 @@ def is_legacy_subscription(subscription: Any) -> bool:
         return False
     if getattr(subscription, 'is_trial', False):
         return False
+    # Подписки персональных выделенных серверов живут без тарифа легитимно
+    if getattr(subscription, 'is_dedicated_server', False):
+        return False
+    if getattr(subscription, 'dedicated_server_orders', None):
+        return False
+    if getattr(subscription, 'dedicated_server_order', None):
+        return False
     return getattr(subscription, 'tariff_id', None) is None

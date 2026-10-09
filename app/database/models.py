@@ -2740,6 +2740,14 @@ class Subscription(Base):
     grace_access_sessions = relationship(
         'GraceAccessSessionModel', back_populates='subscription', passive_deletes=True, lazy='noload'
     )
+    dedicated_server_orders = relationship(
+        'DedicatedServerOrder', back_populates='subscription', lazy='selectin'
+    )
+
+    @property
+    def is_dedicated_server(self) -> bool:
+        orders = getattr(self, 'dedicated_server_orders', None)
+        return bool(orders)
 
     @property
     def is_active(self) -> bool:
@@ -5501,7 +5509,7 @@ class DedicatedServerOrder(Base):
     expires_at = Column(AwareDateTime(), nullable=True)
 
     user = relationship('User', backref='dedicated_server_orders')
-    subscription = relationship('Subscription', backref='dedicated_server_order')
+    subscription = relationship('Subscription', back_populates='dedicated_server_orders')
 
     @property
     def is_active(self) -> bool:
