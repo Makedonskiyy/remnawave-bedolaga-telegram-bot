@@ -104,6 +104,10 @@ async def create_dedicated_server_order(
             period_days=request.period_days,
             deployment_type=request.deployment_type,
             options=request.options,
+            server_ip=request.server_ip,
+            server_ssh_port=request.server_ssh_port,
+            server_ssh_password=request.server_ssh_password,
+            server_notes=request.server_notes,
         )
     except ValueError as e:
         raise HTTPException(

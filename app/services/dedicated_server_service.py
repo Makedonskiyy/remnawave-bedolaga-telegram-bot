@@ -266,7 +266,11 @@ class DedicatedServerService:
         country_code: str,
         period_days: int = 30,
         deployment_type: str = 'turnkey',
-        options: dict[str, bool] | None = None,
+        options: dict[str, Any] | None = None,
+        server_ip: str | None = None,
+        server_ssh_port: int | None = 22,
+        server_ssh_password: str | None = None,
+        server_notes: str | None = None,
     ) -> DedicatedServerOrder:
         """Создать и оплатить заказ выделенного сервера с баланса пользователя."""
         country = DedicatedServerService.get_country_by_code(country_code)
@@ -295,6 +299,15 @@ class DedicatedServerService:
             raise ValueError('Не удалось списать средства с баланса')
 
         setup_token = secrets.token_urlsafe(32)
+        order_options = dict(options or {'ai_access': True, 'youtube_no_ads': True})
+        if deployment_type == 'byos' or server_ip or server_ssh_password or server_notes:
+            order_options['byos'] = {
+                'ip': server_ip,
+                'ssh_port': server_ssh_port or 22,
+                'ssh_password': server_ssh_password,
+                'notes': server_notes,
+            }
+
         order = DedicatedServerOrder(
             user_id=user.id,
             status=DedicatedServerStatus.PENDING.value,
@@ -306,7 +319,8 @@ class DedicatedServerService:
             ram_gb=1,
             period_days=period_days,
             amount_kopeks=amount_kopeks,
-            options=options or {'ai_access': True, 'youtube_no_ads': True},
+            options=order_options,
+            ip_address=server_ip.strip() if server_ip else None,
             setup_token=setup_token,
             expires_at=datetime.now(UTC) + timedelta(days=period_days),
         )

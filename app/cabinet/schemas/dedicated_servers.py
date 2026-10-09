@@ -61,7 +61,12 @@ class DedicatedServerOrderRequest(BaseModel):
     country_code: str = Field(..., min_length=2, max_length=8)
     period_days: int = Field(30, ge=1, le=365)
     deployment_type: str = Field('turnkey', description="'turnkey' (под ключ) or 'byos' (свой сервер)")
-    options: dict[str, bool] = Field(default_factory=dict)
+    options: dict[str, Any] = Field(default_factory=dict)
+    # Опциональные поля, если клиент подключает свой VPS (BYOS)
+    server_ip: str | None = Field(None, max_length=64, description="IP-адрес своего VPS")
+    server_ssh_port: int | None = Field(22, ge=1, le=65535, description="SSH порт своего VPS")
+    server_ssh_password: str | None = Field(None, max_length=255, description="Пароль root от своего VPS для настройки админом")
+    server_notes: str | None = Field(None, max_length=500, description="Дополнительные пожелания к настройке")
 
 
 class DedicatedServerOrderItem(BaseModel):
