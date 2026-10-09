@@ -74,6 +74,10 @@ class DedicatedServerOrderItem(BaseModel):
 
     id: int
     user_id: int
+    username: str | None = None
+    email: str | None = None
+    telegram_id: int | None = None
+    user: dict[str, Any] | None = None
     status: str
     country_code: str
     country_name: str
@@ -84,6 +88,8 @@ class DedicatedServerOrderItem(BaseModel):
     period_days: int
     amount_kopeks: int
     amount_rubles: float
+    price_kopeks: int | None = None
+    price_rubles: float | None = None
     options: dict[str, Any] = Field(default_factory=dict)
     ip_address: str | None = None
     squad_uuid: str | None = None

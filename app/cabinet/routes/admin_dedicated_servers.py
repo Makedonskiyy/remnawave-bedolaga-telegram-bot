@@ -34,9 +34,28 @@ def _order_to_item(order: DedicatedServerOrder) -> DedicatedServerOrderItem:
     if order.setup_token:
         setup_script = DedicatedServerService.get_setup_script(order)
 
+    username = None
+    email = None
+    telegram_id = None
+    user_dict = None
+    if order.user:
+        username = order.user.username
+        email = order.user.email
+        telegram_id = order.user.telegram_id
+        user_dict = {
+            'id': order.user.id,
+            'username': order.user.username,
+            'email': order.user.email,
+            'telegram_id': order.user.telegram_id,
+        }
+
     return DedicatedServerOrderItem(
         id=order.id,
         user_id=order.user_id,
+        username=username,
+        email=email,
+        telegram_id=telegram_id,
+        user=user_dict,
         status=order.status,
         country_code=order.country_code,
         country_name=order.country_name,
@@ -47,6 +66,8 @@ def _order_to_item(order: DedicatedServerOrder) -> DedicatedServerOrderItem:
         period_days=order.period_days,
         amount_kopeks=order.amount_kopeks,
         amount_rubles=round(order.amount_kopeks / 100, 2),
+        price_kopeks=order.amount_kopeks,
+        price_rubles=round(order.amount_kopeks / 100, 2),
         options=order.options or {},
         ip_address=order.ip_address,
         squad_uuid=order.squad_uuid,
@@ -72,7 +93,10 @@ async def list_dedicated_server_orders(
     """List dedicated server orders with optional status filter."""
     stmt = (
         select(DedicatedServerOrder)
-        .options(selectinload(DedicatedServerOrder.subscription))
+        .options(
+            selectinload(DedicatedServerOrder.subscription),
+            selectinload(DedicatedServerOrder.user),
+        )
         .order_by(desc(DedicatedServerOrder.created_at))
     )
     count_stmt = select(func.count(DedicatedServerOrder.id))
@@ -101,7 +125,10 @@ async def get_dedicated_server_order(
     stmt = (
         select(DedicatedServerOrder)
         .where(DedicatedServerOrder.id == order_id)
-        .options(selectinload(DedicatedServerOrder.subscription))
+        .options(
+            selectinload(DedicatedServerOrder.subscription),
+            selectinload(DedicatedServerOrder.user),
+        )
     )
     result = await db.execute(stmt)
     order = result.scalar_one_or_none()
@@ -118,7 +145,7 @@ async def get_dedicated_server_order(
 async def assign_and_activate_server(
     order_id: int,
     request: DedicatedServerAdminAssignRequest,
-    admin: User = Depends(require_permission('servers:update')),
+    admin: User = Depends(require_permission('servers:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Assign RemnaWave squad, IP address, and activate dedicated server."""
@@ -151,7 +178,7 @@ async def assign_and_activate_server(
 async def reject_dedicated_server_order(
     order_id: int,
     request: DedicatedServerAdminRejectRequest,
-    admin: User = Depends(require_permission('servers:update')),
+    admin: User = Depends(require_permission('servers:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Reject dedicated server order and refund funds to user balance."""
@@ -182,7 +209,7 @@ async def reject_dedicated_server_order(
 async def update_order_status(
     order_id: int,
     new_status: str,
-    admin: User = Depends(require_permission('servers:update')),
+    admin: User = Depends(require_permission('servers:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update order lifecycle status (e.g. setting_up)."""
@@ -227,7 +254,7 @@ async def get_dedicated_server_pricing(
 @router.put('/pricing/config', response_model=DedicatedServerPricingConfig)
 async def update_dedicated_server_pricing(
     request: DedicatedServerPricingUpdateRequest,
-    admin: User = Depends(require_permission('servers:update')),
+    admin: User = Depends(require_permission('servers:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update dedicated server base monthly price and discounts."""
