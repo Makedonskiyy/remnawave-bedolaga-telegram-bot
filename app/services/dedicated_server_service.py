@@ -143,6 +143,7 @@ class DedicatedServerService:
         'base_monthly_price_kopeks': DEFAULT_BASE_MONTHLY_PRICE_KOPEKS,
         'period_discounts': {'30': 0, '90': 10, '180': 15, '365': 22},
         'country_prices_kopeks': {},
+        'option_prices_kopeks': {'ai_access': 0, 'youtube_no_ads': 0},
     }
 
     @classmethod
@@ -173,6 +174,7 @@ class DedicatedServerService:
         base_monthly_price_kopeks: int,
         period_discounts: dict[str, int] | None = None,
         country_prices_kopeks: dict[str, int] | None = None,
+        option_prices_kopeks: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         """Сохранить настройки цен личных серверов в БД."""
         cls._cached_pricing['base_monthly_price_kopeks'] = base_monthly_price_kopeks
@@ -180,6 +182,8 @@ class DedicatedServerService:
             cls._cached_pricing['period_discounts'] = period_discounts
         if country_prices_kopeks is not None:
             cls._cached_pricing['country_prices_kopeks'] = country_prices_kopeks
+        if option_prices_kopeks is not None:
+            cls._cached_pricing['option_prices_kopeks'] = option_prices_kopeks
 
         res = await db.execute(
             select(SystemSetting).where(SystemSetting.key == cls.DEDICATED_SERVERS_PRICING_KEY)
@@ -230,6 +234,7 @@ class DedicatedServerService:
         period_days: int,
         country_code: str | None = None,
         base_monthly_kopeks: int | None = None,
+        options: dict[str, Any] | None = None,
     ) -> int:
         pricing = cls.get_pricing_sync()
         base_price = base_monthly_kopeks if base_monthly_kopeks is not None else pricing.get('base_monthly_price_kopeks', DEFAULT_BASE_MONTHLY_PRICE_KOPEKS)
@@ -240,11 +245,25 @@ class DedicatedServerService:
                 base_price = country_overrides[code_upper]
 
         discounts = pricing.get('period_discounts', {})
+        server_price = None
         for p in cls.get_period_prices(base_price, discounts):
             if p['days'] == period_days:
-                return p['price_kopeks']
+                server_price = p['price_kopeks']
+                break
         months = max(1, period_days // 30)
-        return months * base_price
+        if server_price is None:
+            server_price = months * base_price
+
+        # Стоимость дополнительных платных опций
+        options_total = 0
+        if options and isinstance(options, dict):
+            opt_prices = pricing.get('option_prices_kopeks', {})
+            for opt_id, is_enabled in options.items():
+                if is_enabled and opt_id != 'byos':
+                    opt_kopeks = int(opt_prices.get(opt_id, 0))
+                    options_total += opt_kopeks * months
+
+        return server_price + options_total
 
     @classmethod
     def get_config_response(cls) -> dict[str, Any]:
@@ -273,6 +292,15 @@ class DedicatedServerService:
             c_dict['base_price_kopeks'] = country_kopeks
             enriched_countries.append(c_dict)
 
+        option_prices_kopeks = pricing.get('option_prices_kopeks', {})
+        enriched_options = []
+        for opt in DEDICATED_SERVER_OPTIONS:
+            opt_copy = dict(opt)
+            price_kop = int(option_prices_kopeks.get(opt['id'], opt.get('price_kopeks', 0)))
+            opt_copy['price_kopeks'] = price_kop
+            opt_copy['price_rubles'] = round(price_kop / 100, 2)
+            enriched_options.append(opt_copy)
+
         return {
             'countries': enriched_countries,
             'period_prices': period_prices,
@@ -281,7 +309,9 @@ class DedicatedServerService:
             'base_price_kopeks': base_price_kopeks,
             'country_prices_rubles': {code: round(kop / 100, 2) for code, kop in country_prices_kopeks.items()},
             'country_prices_kopeks': country_prices_kopeks,
-            'options': DEDICATED_SERVER_OPTIONS,
+            'option_prices_rubles': {k: round(v / 100, 2) for k, v in option_prices_kopeks.items()},
+            'option_prices_kopeks': option_prices_kopeks,
+            'options': enriched_options,
             'marketing': DEDICATED_MARKETING_CONTENT,
             'byos_supported': True,
         }
@@ -304,7 +334,7 @@ class DedicatedServerService:
         if not country:
             raise ValueError(f"Выбранная страна '{country_code}' не поддерживается для выделенных серверов")
 
-        amount_kopeks = DedicatedServerService.calculate_order_price(period_days, country_code)
+        amount_kopeks = DedicatedServerService.calculate_order_price(period_days, country_code, options=options)
         if user.balance_kopeks < amount_kopeks:
             missing_rubles = round((amount_kopeks - user.balance_kopeks) / 100, 2)
             raise ValueError(f'Недостаточно средств на балансе. Пополните баланс на {missing_rubles} ₽')
@@ -383,6 +413,7 @@ class DedicatedServerService:
         ip_address: str,
         squad_uuid: str,
         admin_notes: str | None = None,
+        user_notes: str | None = None,
         bot: Bot | None = None,
     ) -> DedicatedServerOrder:
         """Администратор привязывает настроенный сквад и активирует сервер."""
@@ -398,6 +429,8 @@ class DedicatedServerService:
         order.ip_address = ip_address.strip()
         order.squad_uuid = squad_uuid.strip()
         order.admin_notes = admin_notes
+        if user_notes is not None:
+            order.user_notes = user_notes
         order.status = DedicatedServerStatus.ACTIVE.value
         order.expires_at = datetime.now(UTC) + timedelta(days=order.period_days)
 
@@ -493,6 +526,85 @@ class DedicatedServerService:
             except Exception as notify_err:
                 logger.warning('Не удалось отправить уведомление пользователю о готовности сервера', error=str(notify_err))
 
+        return order
+
+    @staticmethod
+    async def update_order(
+        db: AsyncSession,
+        order_id: int,
+        ip_address: str | None = None,
+        squad_uuid: str | None = None,
+        status: str | None = None,
+        admin_notes: str | None = None,
+        user_notes: str | None = None,
+        expires_at: datetime | None = None,
+        bot: Bot | None = None,
+    ) -> DedicatedServerOrder:
+        """Редактирование параметров существующего сервера администратором."""
+        result = await db.execute(
+            select(DedicatedServerOrder)
+            .where(DedicatedServerOrder.id == order_id)
+            .options(
+                selectinload(DedicatedServerOrder.user),
+                selectinload(DedicatedServerOrder.subscription),
+            )
+        )
+        order = result.scalar_one_or_none()
+        if not order:
+            raise ValueError(f'Заказ #{order_id} не найден')
+
+        if ip_address is not None:
+            order.ip_address = ip_address.strip() if ip_address.strip() else None
+
+        if squad_uuid is not None:
+            new_squad = squad_uuid.strip() if squad_uuid.strip() else None
+            order.squad_uuid = new_squad
+            # Если подписка привязана, обновляем список сквадов и синхронизируем
+            if order.subscription and new_squad:
+                order.subscription.connected_squads = [new_squad]
+                try:
+                    sub_service = SubscriptionService()
+                    remna_user = await sub_service.sync_remnawave_user(db, order.subscription)
+                    if remna_user and getattr(remna_user, 'subscription_url', None):
+                        order.subscription.subscription_url = remna_user.subscription_url
+                except Exception as sync_err:
+                    logger.warning('Failed to re-sync squad with RemnaWave on update', error=str(sync_err))
+
+        if admin_notes is not None:
+            order.admin_notes = admin_notes.strip() if admin_notes.strip() else None
+
+        if user_notes is not None:
+            order.user_notes = user_notes.strip() if user_notes.strip() else None
+
+        if expires_at is not None:
+            order.expires_at = expires_at
+            if order.subscription:
+                order.subscription.end_date = expires_at
+                try:
+                    sub_service = SubscriptionService()
+                    await sub_service.sync_remnawave_user(db, order.subscription)
+                except Exception as sync_err:
+                    logger.warning('Failed to sync end_date with RemnaWave on update', error=str(sync_err))
+
+        if status is not None:
+            new_status_val = status.strip().lower()
+            order.status = new_status_val
+            # Если статус переводится в активный и подписки еще не было, создаем ее
+            if new_status_val == DedicatedServerStatus.ACTIVE.value and not order.subscription_id and order.squad_uuid:
+                subscription = await create_paid_subscription(
+                    db=db,
+                    user_id=order.user_id,
+                    duration_days=order.period_days,
+                    traffic_limit_gb=0,
+                    device_limit=999,
+                    connected_squads=[order.squad_uuid],
+                    commit=False,
+                )
+                order.subscription_id = subscription.id
+                order.subscription = subscription
+
+        await db.commit()
+        await db.refresh(order)
         return order
 
     @staticmethod

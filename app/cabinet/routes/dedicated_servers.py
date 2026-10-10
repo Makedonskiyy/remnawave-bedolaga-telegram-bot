@@ -61,6 +61,7 @@ def _order_to_item(order: DedicatedServerOrder) -> DedicatedServerOrderItem:
         setup_token=order.setup_token,
         setup_script=setup_script,
         admin_notes=order.admin_notes,
+        user_notes=order.user_notes,
         rejected_reason=order.rejected_reason,
         created_at=order.created_at,
         expires_at=order.expires_at,
@@ -174,22 +175,42 @@ async def get_raw_dedicated_server_script(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Invalid installation token')
 
     script_content = f"""#!/bin/bash
-# Dedicated Node Auto-provisioning Script for Order #{order.id}
+# Dedicated VPS Auto-provisioning Script for Order #{order.id}
 # Location: {order.country_name} ({order.country_code})
 set -e
 
-echo "=== [Bedolaga VPN] Initializing Dedicated Node Setup ==="
+echo "=== [Triton VPN / Bedolaga] Initializing Dedicated Node Setup ==="
 echo "Order ID: {order.id}"
 echo "Country: {order.country_name} ({order.country_code})"
 
 apt-get update -qq
-apt-get install -y -qq curl wget ufw ca-certificates iptables
+apt-get install -y -qq curl wget ufw ca-certificates iptables gnupg lsb-release
 
-# BBR kernel optimization
-echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
-echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+# 1. BBR kernel network optimization
+if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf 2>/dev/null; then
+    echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+fi
+if ! grep -q "net.ipv4.tcp_congestion_control=bbr" /etc/sysctl.conf 2>/dev/null; then
+    echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+fi
 sysctl -p > /dev/null 2>&1 || true
 
-echo "=== Node network preparation completed. Contact support or wait for admin activation. ==="
+# 2. Docker installation if missing
+if ! command -v docker > /dev/null 2>&1; then
+    echo "Installing Docker..."
+    curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+    sh /tmp/get-docker.sh > /dev/null 2>&1 || true
+    rm -f /tmp/get-docker.sh
+fi
+
+# 3. Firewall rules for VPN protocols (SSH, VLESS, Reality, Shadowsocks)
+ufw allow 22/tcp > /dev/null 2>&1 || true
+ufw allow 443/tcp > /dev/null 2>&1 || true
+ufw allow 443/udp > /dev/null 2>&1 || true
+ufw allow 80/tcp > /dev/null 2>&1 || true
+ufw --force enable > /dev/null 2>&1 || true
+
+echo "=== Dedicated VPS Preparation Completed! ==="
+echo "Node is ready to be linked to RemnaWave panel."
 """
     return PlainTextResponse(content=script_content, media_type='text/plain')

@@ -274,24 +274,71 @@ async def test_dedicated_server_save_and_load_pricing():
     mock_res.scalar_one_or_none.return_value = None
     db.execute.return_value = mock_res
 
-    # Save custom pricing: 1 990 rub base price
+    # Save custom pricing: 1 990 rub base price, and paid options (150 rub each)
     saved = await DedicatedServerService.save_pricing_config(
         db=db,
         base_monthly_price_kopeks=199000,
         period_discounts={'30': 0, '90': 12, '180': 20, '365': 25},
         country_prices_kopeks={'US': 249000},
+        option_prices_kopeks={'ai_access': 15000, 'youtube_no_ads': 15000},
     )
 
     assert saved['base_monthly_price_kopeks'] == 199000
     assert saved['period_discounts']['90'] == 12
     assert saved['country_prices_kopeks']['US'] == 249000
+    assert saved['option_prices_kopeks']['ai_access'] == 15000
 
-    # Calculate price with updated settings
+    # Calculate price with updated settings without options
     price_de = DedicatedServerService.calculate_order_price(30, 'DE')
     assert price_de == 199000
 
+    # Calculate price with both paid options (1990 rub + 150 rub + 150 rub = 2290 rub)
+    price_de_addons = DedicatedServerService.calculate_order_price(
+        30, 'DE', options={'ai_access': True, 'youtube_no_ads': True}
+    )
+    assert price_de_addons == 229000
+
     price_us = DedicatedServerService.calculate_order_price(30, 'US')
     assert price_us == 249000
+
+
+@pytest.mark.asyncio
+async def test_dedicated_server_update_order():
+    """Verify admin can update server details, user_notes, admin_notes, and IP."""
+    db = AsyncMock()
+    order = DedicatedServerOrder(
+        id=77,
+        user_id=10,
+        status=DedicatedServerStatus.SETTING_UP.value,
+        country_code='DE',
+        country_name='Германия',
+        period_days=30,
+        amount_kopeks=149000,
+        ip_address=None,
+        squad_uuid=None,
+        admin_notes=None,
+        user_notes=None,
+    )
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = order
+    db.execute.return_value = mock_res
+
+    updated = await DedicatedServerService.update_order(
+        db=db,
+        order_id=77,
+        ip_address='198.51.100.25',
+        squad_uuid='squad-updated-uuid',
+        status=DedicatedServerStatus.ACTIVE.value,
+        admin_notes='internal admin note',
+        user_notes='instructions for customer: root pass 12345',
+    )
+
+    assert updated.ip_address == '198.51.100.25'
+    assert updated.squad_uuid == 'squad-updated-uuid'
+    assert updated.status == DedicatedServerStatus.ACTIVE.value
+    assert updated.admin_notes == 'internal admin note'
+    assert updated.user_notes == 'instructions for customer: root pass 12345'
+    db.commit.assert_awaited_once()
 
 
 def test_dedicated_server_route_order_no_conflict():

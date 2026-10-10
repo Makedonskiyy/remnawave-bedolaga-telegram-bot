@@ -24,6 +24,7 @@ class DedicatedServerOption(BaseModel):
     name: str
     description: str
     price_kopeks: int = 0
+    price_rubles: float = 0.0
     icon: str
 
 
@@ -67,6 +68,8 @@ class DedicatedServerConfigResponse(BaseModel):
     base_price_kopeks: int = 129000
     country_prices_rubles: dict[str, float] = Field(default_factory=dict)
     country_prices_kopeks: dict[str, int] = Field(default_factory=dict)
+    option_prices_rubles: dict[str, float] = Field(default_factory=dict)
+    option_prices_kopeks: dict[str, int] = Field(default_factory=dict)
     options: list[DedicatedServerOption]
     marketing: DedicatedServerMarketing
     byos_supported: bool = True
@@ -115,6 +118,7 @@ class DedicatedServerOrderItem(BaseModel):
     setup_token: str | None = None
     setup_script: str | None = None
     admin_notes: str | None = None
+    user_notes: str | None = None
     rejected_reason: str | None = None
     created_at: datetime
     expires_at: datetime | None = None
@@ -136,6 +140,18 @@ class DedicatedServerAdminAssignRequest(BaseModel):
     ip_address: str = Field(..., min_length=7, max_length=64)
     squad_uuid: str = Field(..., min_length=10, max_length=255)
     admin_notes: str | None = None
+    user_notes: str | None = None
+
+
+class DedicatedServerAdminUpdateRequest(BaseModel):
+    """Admin request to edit an existing dedicated server order."""
+
+    ip_address: str | None = Field(None, max_length=64)
+    squad_uuid: str | None = Field(None, max_length=255)
+    status: str | None = Field(None, max_length=32)
+    admin_notes: str | None = None
+    user_notes: str | None = None
+    expires_at: datetime | None = None
 
 
 class DedicatedServerAdminRejectRequest(BaseModel):
@@ -158,6 +174,8 @@ class DedicatedServerPricingConfig(BaseModel):
     base_monthly_price_rubles: float = 1290.0
     period_discounts: dict[str, int] = Field(default_factory=lambda: {'30': 0, '90': 10, '180': 15, '365': 22})
     country_prices_kopeks: dict[str, int] = Field(default_factory=dict)
+    option_prices_kopeks: dict[str, int] = Field(default_factory=dict)
+    option_prices_rubles: dict[str, float] = Field(default_factory=dict)
 
 
 class DedicatedServerPricingUpdateRequest(BaseModel):
@@ -166,6 +184,7 @@ class DedicatedServerPricingUpdateRequest(BaseModel):
     base_monthly_price_kopeks: int = Field(..., ge=1000)
     period_discounts: dict[str, int] | None = None
     country_prices_kopeks: dict[str, int] | None = None
+    option_prices_kopeks: dict[str, int] | None = None
 
 
 class DedicatedServerSetupScriptResponse(BaseModel):

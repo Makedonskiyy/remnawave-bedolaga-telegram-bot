@@ -5502,6 +5502,7 @@ class DedicatedServerOrder(Base):
     setup_token = Column(String(64), unique=True, nullable=True, index=True)
 
     admin_notes = Column(Text, nullable=True)
+    user_notes = Column(Text, nullable=True)
     rejected_reason = Column(Text, nullable=True)
 
     created_at = Column(AwareDateTime(), default=func.now(), nullable=False)

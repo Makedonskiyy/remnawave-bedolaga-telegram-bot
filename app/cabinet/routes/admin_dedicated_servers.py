@@ -14,6 +14,7 @@ from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.dedicated_servers import (
     DedicatedServerAdminAssignRequest,
     DedicatedServerAdminRejectRequest,
+    DedicatedServerAdminUpdateRequest,
     DedicatedServerListResponse,
     DedicatedServerOrderItem,
     DedicatedServerPricingConfig,
@@ -84,6 +85,7 @@ def _order_to_item(order: DedicatedServerOrder) -> DedicatedServerOrderItem:
         setup_token=order.setup_token,
         setup_script=setup_script,
         admin_notes=order.admin_notes,
+        user_notes=order.user_notes,
         rejected_reason=order.rejected_reason,
         created_at=order.created_at,
         expires_at=order.expires_at,
@@ -131,11 +133,14 @@ async def get_dedicated_server_pricing(
     """Get current dedicated server pricing configuration."""
     pricing = await DedicatedServerService.get_pricing_config(db)
     base_kopeks = pricing.get('base_monthly_price_kopeks', 129000)
+    opt_kopeks = pricing.get('option_prices_kopeks', {})
     return DedicatedServerPricingConfig(
         base_monthly_price_kopeks=base_kopeks,
         base_monthly_price_rubles=round(base_kopeks / 100, 2),
         period_discounts=pricing.get('period_discounts', {'30': 0, '90': 10, '180': 15, '365': 22}),
         country_prices_kopeks=pricing.get('country_prices_kopeks', {}),
+        option_prices_kopeks=opt_kopeks,
+        option_prices_rubles={k: round(v / 100, 2) for k, v in opt_kopeks.items()},
     )
 
 
@@ -145,19 +150,23 @@ async def update_dedicated_server_pricing(
     admin: User = Depends(require_permission('servers:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Update dedicated server base monthly price and discounts."""
+    """Update dedicated server base monthly price, discounts, and option prices."""
     updated = await DedicatedServerService.save_pricing_config(
         db=db,
         base_monthly_price_kopeks=request.base_monthly_price_kopeks,
         period_discounts=request.period_discounts,
         country_prices_kopeks=request.country_prices_kopeks,
+        option_prices_kopeks=request.option_prices_kopeks,
     )
     base_kopeks = updated.get('base_monthly_price_kopeks', request.base_monthly_price_kopeks)
+    opt_kopeks = updated.get('option_prices_kopeks', {})
     return DedicatedServerPricingConfig(
         base_monthly_price_kopeks=base_kopeks,
         base_monthly_price_rubles=round(base_kopeks / 100, 2),
         period_discounts=updated.get('period_discounts', {}),
         country_prices_kopeks=updated.get('country_prices_kopeks', {}),
+        option_prices_kopeks=opt_kopeks,
+        option_prices_rubles={k: round(v / 100, 2) for k, v in opt_kopeks.items()},
     )
 
 
@@ -187,6 +196,42 @@ async def get_dedicated_server_order(
     return _order_to_item(order)
 
 
+@router.put('/{order_id}', response_model=DedicatedServerOrderItem)
+async def update_dedicated_server_order(
+    order_id: int,
+    request: DedicatedServerAdminUpdateRequest,
+    admin: User = Depends(require_permission('servers:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Edit existing dedicated server parameters (IP, squad, status, notes, expires_at)."""
+    bot = create_bot()
+    try:
+        order = await DedicatedServerService.update_order(
+            db=db,
+            order_id=order_id,
+            ip_address=request.ip_address,
+            squad_uuid=request.squad_uuid,
+            status=request.status,
+            admin_notes=request.admin_notes,
+            user_notes=request.user_notes,
+            expires_at=request.expires_at,
+            bot=bot,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error('Failed to update dedicated server', error=e, order_id=order_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Failed to update dedicated server',
+        )
+
+    return _order_to_item(order)
+
+
 @router.post('/{order_id}/assign', response_model=DedicatedServerOrderItem)
 async def assign_and_activate_server(
     order_id: int,
@@ -203,6 +248,7 @@ async def assign_and_activate_server(
             ip_address=request.ip_address,
             squad_uuid=request.squad_uuid,
             admin_notes=request.admin_notes,
+            user_notes=request.user_notes,
             bot=bot,
         )
     except ValueError as e:
