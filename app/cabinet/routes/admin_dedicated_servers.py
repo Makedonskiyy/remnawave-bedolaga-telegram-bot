@@ -49,6 +49,14 @@ def _order_to_item(order: DedicatedServerOrder) -> DedicatedServerOrderItem:
             'telegram_id': order.user.telegram_id,
         }
 
+    status_val = order.status
+    if status_val == DedicatedServerStatus.ACTIVE.value and order.expires_at:
+        from datetime import UTC, datetime
+        from app.utils.timezone import ensure_utc
+
+        if ensure_utc(order.expires_at) <= datetime.now(UTC):
+            status_val = DedicatedServerStatus.EXPIRED.value
+
     return DedicatedServerOrderItem(
         id=order.id,
         user_id=order.user_id,
@@ -56,7 +64,7 @@ def _order_to_item(order: DedicatedServerOrder) -> DedicatedServerOrderItem:
         email=email,
         telegram_id=telegram_id,
         user=user_dict,
-        status=order.status,
+        status=status_val,
         country_code=order.country_code,
         country_name=order.country_name,
         continent=order.continent,

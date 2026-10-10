@@ -555,5 +555,7 @@ class DedicatedServerService:
             or 'https://api.vpn.example.com'
         ).rstrip('/')
         token = order.setup_token or 'token'
-        return f'curl -sSL {base_url}/cabinet/dedicated-servers/install/{token} | bash'
+        endpoint_prefix = '/cabinet' if base_url.endswith('/api') else '/api/cabinet'
+        return f'curl -sSL {base_url}{endpoint_prefix}/dedicated-servers/install/{token} | bash'
+
 

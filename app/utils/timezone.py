@@ -40,6 +40,9 @@ def _as_aware_utc(moment: datetime | None) -> datetime:
     return moment.astimezone(UTC)
 
 
+ensure_utc = _as_aware_utc
+
+
 def local_date(moment: datetime | None = None, tz: ZoneInfo | None = None) -> date:
     """Календарная дата момента ``moment`` (по умолчанию — сейчас) в зоне ``tz``.
 

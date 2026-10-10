@@ -7,8 +7,10 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database.models import DedicatedServerOrder, User
+from app.database.models import DedicatedServerOrder, DedicatedServerStatus, User
 from app.services.dedicated_server_service import DedicatedServerService
+from app.utils.timezone import ensure_utc
+from datetime import UTC, datetime
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
 from ..schemas.dedicated_servers import (
@@ -33,10 +35,15 @@ def _order_to_item(order: DedicatedServerOrder) -> DedicatedServerOrderItem:
     if order.setup_token:
         setup_script = DedicatedServerService.get_setup_script(order)
 
+    status_val = order.status
+    if status_val == DedicatedServerStatus.ACTIVE.value and order.expires_at:
+        if ensure_utc(order.expires_at) <= datetime.now(UTC):
+            status_val = DedicatedServerStatus.EXPIRED.value
+
     return DedicatedServerOrderItem(
         id=order.id,
         user_id=order.user_id,
-        status=order.status,
+        status=status_val,
         country_code=order.country_code,
         country_name=order.country_name,
         continent=order.continent,
