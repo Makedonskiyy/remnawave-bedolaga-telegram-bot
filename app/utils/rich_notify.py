@@ -210,6 +210,13 @@ def build_broadcast_rich_html(text: str, *, logo_url: str = '') -> str | None:
     if not text or not text.strip():
         return None
 
+    # Если в тексте нет явных rich-тегов (article, h1-h6, hr, details и т.д.),
+    # не упаковываем его в компактную rich-карточку: отдаем None, чтобы рассылка
+    # ушла классическим send_message с естественными межстрочными отступами Telegram.
+    rich_tags_pattern = r'<(?:article|section|main|header|footer|h[1-6]|hr|summary|details)\b'
+    if not re.search(rich_tags_pattern, text, re.IGNORECASE):
+        return None
+
     # 1. Заменяем классические спойлеры на tg-spoiler
     value = _SPOILER_SPAN_RE.sub(r'<tg-spoiler>\2</tg-spoiler>', text.strip())
 

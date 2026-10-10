@@ -95,3 +95,13 @@ def test_broadcast_classic_with_existing_telegram_html():
     assert '<code>код</code>' in classic_html
     assert '<a href=' in classic_html
     assert '<blockquote>Цитата</blockquote>' in classic_html
+
+
+def test_broadcast_standard_text_not_forced_to_rich():
+    """Verify that standard Telegram text without article/h1/hr tags is NOT forced to rich HTML."""
+    standard_text = (
+        "<b>Заголовок</b>\n\n"
+        "Параграф 1\n\n"
+        "Параграф 2"
+    )
+    assert build_broadcast_rich_html(standard_text) is None
