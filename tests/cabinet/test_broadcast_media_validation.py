@@ -39,8 +39,8 @@ async def test_send_rejects_media_caption_over_1024() -> None:
     request = CombinedBroadcastCreateRequest(
         channel='telegram',
         target='all',
-        message_text='x' * 1025,
-        media=BroadcastMediaRequest(type='photo', file_id=FILE_ID),
+        message_text='коротко',
+        media=BroadcastMediaRequest(type='photo', file_id=FILE_ID, caption='x' * 1025),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -50,19 +50,27 @@ async def test_send_rejects_media_caption_over_1024() -> None:
     assert '1024' in str(exc.value.detail)
 
 
-async def test_send_checks_the_caption_that_is_actually_sent() -> None:
-    """Если у медиа своя подпись, ограничение относится к ней, а не к message_text."""
+async def test_send_allows_long_message_text_with_media(monkeypatch) -> None:
+    """Текст сообщения до 4000 символов разрешён с медиафайлом (отправка сплитом)."""
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr('app.services.broadcast_service.broadcast_service.start_broadcast', AsyncMock())
+
     request = CombinedBroadcastCreateRequest(
         channel='telegram',
         target='all',
-        message_text='коротко',
-        media=BroadcastMediaRequest(type='photo', file_id=FILE_ID, caption='y' * 1025),
+        message_text='x' * 1227,
+        media=BroadcastMediaRequest(type='photo', file_id=FILE_ID),
     )
 
-    with pytest.raises(HTTPException) as exc:
-        await create_combined_broadcast(request=request, admin=_admin(), db=_db())
-
-    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+    db = _db()
+    async def fake_refresh(obj):
+        obj.id = 1
+        obj.created_at = datetime.now(UTC)
+    db.refresh = AsyncMock(side_effect=fake_refresh)
+    response = await create_combined_broadcast(request=request, admin=_admin(), db=db)
+    assert response.has_media is True
+    assert len(response.message_text) == 1227
 
 
 def test_media_file_id_must_look_like_a_telegram_file_id() -> None:

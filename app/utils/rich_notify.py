@@ -237,6 +237,13 @@ def build_broadcast_rich_html(text: str, *, logo_url: str = '') -> str | None:
     # 6. Проверяем наличие блочной разметки
     has_rich_blocks = bool(re.search(r'<(?:h[46]|hr/|p|blockquote|table|details)\b', value, re.IGNORECASE))
 
+    # Обеспечиваем границы блоков для блочных тегов перед разбивкой
+    value = re.sub(r'<(h[46]|details|blockquote)\b', r'\n\n<\1', value, flags=re.IGNORECASE)
+    value = re.sub(r'</(h[46]|details|blockquote)>', r'</\1>\n\n', value, flags=re.IGNORECASE)
+    value = re.sub(r'<hr/>', r'\n\n<hr/>\n\n', value, flags=re.IGNORECASE)
+    value = re.sub(r'<p\b[^>]*>', r'\n\n<p>', value, flags=re.IGNORECASE)
+    value = re.sub(r'</p>', r'</p>\n\n', value, flags=re.IGNORECASE)
+
     blocks: list[str] = []
     if logo_url:
         blocks.append(f'<img src="{html.escape(logo_url, quote=True)}"/>')
@@ -255,14 +262,38 @@ def build_broadcast_rich_html(text: str, *, logo_url: str = '') -> str | None:
         else:
             blocks.extend(_paragraphs_html(lines[first_index:]))
     else:
-        chunks = [chunk.strip('\n') for chunk in re.split(r'\n\s*\n+', value) if chunk.strip()]
+        chunks = [chunk.strip() for chunk in re.split(r'\n\s*\n+', value) if chunk.strip()]
         formatted_chunks = []
         for chunk in chunks:
-            if re.match(r'^\s*<(?:h[46]|hr/|p|blockquote|table|details)\b', chunk, re.IGNORECASE):
+            if re.match(r'^<(?:h[46]|hr/|blockquote|table|details)\b', chunk, re.IGNORECASE):
                 formatted_chunks.append(chunk.replace('\n', '<br/>'))
+            elif re.match(r'^<p\b[^>]*>(.*?)</p>$', chunk, re.IGNORECASE | re.DOTALL):
+                inner = re.sub(r'^<p\b[^>]*>(.*?)</p>$', r'\1', chunk, flags=re.IGNORECASE | re.DOTALL).strip()
+                if not inner or inner in ('<br/>', '<br>', '&nbsp;', '&#160;', '&#x200B;'):
+                    formatted_chunks.append('<p><br/></p>')
+                else:
+                    formatted_chunks.append(f'<p>{inner.replace(chr(10), "<br/>")}</p>')
             else:
                 formatted_chunks.append(f'<p>{chunk.replace(chr(10), "<br/>")}</p>')
-        blocks.append(''.join(formatted_chunks))
+
+        assembled: list[str] = []
+        for blk in formatted_chunks:
+            if not assembled:
+                assembled.append(blk)
+                continue
+            prev = assembled[-1]
+            needs_spacer = (
+                prev != '<hr/>'
+                and blk != '<hr/>'
+                and not prev.startswith('<img')
+                and prev != '<p><br/></p>'
+                and blk != '<p><br/></p>'
+            )
+            if needs_spacer:
+                assembled.append('<p><br/></p>')
+            assembled.append(blk)
+
+        blocks.extend(assembled)
 
     result = ''.join(blocks)
     return result if result.strip() else None
@@ -282,8 +313,8 @@ def broadcast_html_to_classic(text: str) -> str:
 
     # Заголовки h1-h3 -> жирный заголовок с отступами
     value = re.sub(r'<h[1-3]\b[^>]*>(.*?)</h[1-3]>', r'\n\n<b>\1</b>\n', value, flags=re.IGNORECASE | re.DOTALL)
-    # Заголовки h4-h6 -> жирный заголовок
-    value = re.sub(r'<h[4-6]\b[^>]*>(.*?)</h[4-6]>', r'\n<b>\1</b>\n', value, flags=re.IGNORECASE | re.DOTALL)
+    # Заголовки h4-h6 -> жирный заголовок с отступами
+    value = re.sub(r'<h[4-6]\b[^>]*>(.*?)</h[4-6]>', r'\n\n<b>\1</b>\n', value, flags=re.IGNORECASE | re.DOTALL)
 
     # Разделитель hr -> визуальная текстовая линия
     value = re.sub(r'<hr\s*/?>', '\n───────────────\n', value, flags=re.IGNORECASE)
@@ -293,7 +324,7 @@ def broadcast_html_to_classic(text: str) -> str:
 
     # Элементы списков li -> маркер списка
     value = re.sub(r'<li\b[^>]*>(.*?)</li>', r'• \1\n', value, flags=re.IGNORECASE | re.DOTALL)
-    value = re.sub(r'</?(?:ul|ol)\b[^>]*>', '', value, flags=re.IGNORECASE)
+    value = re.sub(r'</?(?:ul|ol)\b[^>]*>', '\n', value, flags=re.IGNORECASE)
 
     # Details / summary
     value = re.sub(r'<summary\b[^>]*>(.*?)</summary>', r'<b>\1</b>\n', value, flags=re.IGNORECASE | re.DOTALL)

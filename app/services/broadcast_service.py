@@ -531,14 +531,50 @@ class BroadcastService:
                 'document': ('document', self._bot.send_document),
             }
             kwarg_name, send_method = media_methods[config.media.type]
-            await send_method(
-                chat_id=telegram_id,
-                **{kwarg_name: config.media.file_id},
-                caption=safe_caption,
-                parse_mode='HTML',
-                reply_markup=keyboard,
-            )
-            return
+            try:
+                if len(safe_caption) <= 1024:
+                    await send_method(
+                        chat_id=telegram_id,
+                        **{kwarg_name: config.media.file_id},
+                        caption=safe_caption,
+                        parse_mode='HTML',
+                        reply_markup=keyboard,
+                    )
+                    return
+                else:
+                    # Подпись превышает лимит Telegram для медиа (1024 символа).
+                    # Отправляем медиа отдельным сообщением, а следом — полный текст рассылки с кнопками.
+                    await send_method(
+                        chat_id=telegram_id,
+                        **{kwarg_name: config.media.file_id},
+                        disable_notification=True,
+                    )
+                    if not await try_send_rich_broadcast(
+                        self._bot,
+                        telegram_id,
+                        config.message_text,
+                        keyboard=keyboard,
+                        with_logo=config.with_logo,
+                    ):
+                        safe_text = broadcast_html_to_classic(config.message_text)
+                        await self._bot.send_message(
+                            chat_id=telegram_id,
+                            text=safe_text,
+                            parse_mode='HTML',
+                            reply_markup=keyboard,
+                        )
+                    return
+            except TelegramBadRequest as media_err:
+                err_lower = str(media_err).lower()
+                if 'bot was blocked' in err_lower or 'user is deactivated' in err_lower or 'chat not found' in err_lower:
+                    raise
+                logger.warning(
+                    'Ошибка отправки медиа в рассылке, откат к отправке текстом',
+                    telegram_id=telegram_id,
+                    media_type=config.media.type,
+                    error=str(media_err),
+                )
+                # Переходим ниже к текстовой доставке рассылки, чтобы сообщение гарантированно дошло получателю
 
         # Пробуем отправить в современном rich-формате статьи (с заголовками h1-h6, hr, p, blockquote)
         if await try_send_rich_broadcast(

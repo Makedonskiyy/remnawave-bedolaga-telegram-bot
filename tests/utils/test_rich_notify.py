@@ -326,7 +326,7 @@ class TestBroadcastIntegration:
     async def test_text_broadcast_goes_rich(self, monkeypatch):
         service = self._service()
         rich = AsyncMock(return_value=True)
-        monkeypatch.setattr('app.utils.rich_notify.try_send_rich_notification', rich)
+        monkeypatch.setattr('app.utils.rich_notify.try_send_rich_broadcast', rich)
 
         await service._deliver_message(42, self._config(), None)
 
@@ -336,25 +336,39 @@ class TestBroadcastIntegration:
 
     async def test_rich_refusal_falls_back_to_plain_send(self, monkeypatch):
         service = self._service()
-        monkeypatch.setattr('app.utils.rich_notify.try_send_rich_notification', AsyncMock(return_value=False))
+        monkeypatch.setattr('app.utils.rich_notify.try_send_rich_broadcast', AsyncMock(return_value=False))
 
         await service._deliver_message(42, self._config(), None)
 
         service._bot.send_message.assert_awaited_once()
 
     async def test_media_broadcast_never_touches_rich(self, monkeypatch):
-        """Загруженный по file_id файл rich-сообщение не несёт."""
+        """Загруженный по file_id файл rich-сообщение не несёт, если укладывается в 1024 символа."""
         from app.services.broadcast_service import BroadcastMediaConfig
 
         service = self._service()
         rich = AsyncMock(return_value=True)
-        monkeypatch.setattr('app.utils.rich_notify.try_send_rich_notification', rich)
+        monkeypatch.setattr('app.utils.rich_notify.try_send_rich_broadcast', rich)
         config = self._config(media=BroadcastMediaConfig(type='photo', file_id='abc', caption='подпись'))
 
         await service._deliver_message(42, config, None)
 
         rich.assert_not_awaited()
         service._bot.send_photo.assert_awaited_once()
+
+    async def test_media_error_falls_back_to_text(self, monkeypatch):
+        """Если отправка медиа завершилась ошибкой file_id, рассылка уходит текстом."""
+        from app.services.broadcast_service import BroadcastMediaConfig
+
+        service = self._service()
+        service._bot.send_photo.side_effect = TelegramBadRequest(method=None, message='wrong file identifier')
+        monkeypatch.setattr('app.utils.rich_notify.try_send_rich_broadcast', AsyncMock(return_value=False))
+        config = self._config(media=BroadcastMediaConfig(type='photo', file_id='bad_id', caption='подпись'))
+
+        await service._deliver_message(42, config, None)
+
+        service._bot.send_photo.assert_awaited_once()
+        service._bot.send_message.assert_awaited_once()
 
 
 class TestUnsupportedServer:

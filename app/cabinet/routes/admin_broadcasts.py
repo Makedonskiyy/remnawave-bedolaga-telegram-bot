@@ -283,14 +283,18 @@ async def _get_tariff_user_counts(db: AsyncSession) -> dict:
 _MEDIA_CAPTION_LIMIT = 1024
 
 
-def _ensure_media_caption_fits(caption: str) -> None:
-    """Отклонить рассылку с медиа, чью подпись Telegram не примет."""
-    if len(caption) > _MEDIA_CAPTION_LIMIT:
+def _ensure_media_caption_fits(caption: str | None) -> None:
+    """Отклонить рассылку только если явная отдельная подпись к медиафайлу превышает 1024 символа.
+
+    Основной текст рассылки разрешён до 4000 символов: движок рассылки при превышении
+    1024 символов автоматически отправляет медиафайл и полный текст последовательно.
+    """
+    if caption and len(caption) > _MEDIA_CAPTION_LIMIT:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f'Текст слишком длинный для сообщения с медиа. Максимум {_MEDIA_CAPTION_LIMIT} символов, '
-                f'сейчас {len(caption)}. Сократите текст или уберите медиафайл.'
+                f'Отдельная подпись к медиафайлу слишком длинная. Максимум {_MEDIA_CAPTION_LIMIT} символов, '
+                f'сейчас {len(caption)}. Используйте основной текст сообщения (до 4000 символов).'
             ),
         )
 
@@ -576,8 +580,8 @@ async def create_broadcast(
 
     media_payload = request.media
 
-    if media_payload:
-        _ensure_media_caption_fits(media_payload.caption or message_text)
+    if media_payload and media_payload.caption:
+        _ensure_media_caption_fits(media_payload.caption)
 
     # Create broadcast record
     broadcast = BroadcastHistory(
@@ -812,9 +816,9 @@ async def create_combined_broadcast(
                 detail='Message text is required for Telegram broadcast',
             )
 
-        # Та же граница, что у POST '' выше: именно этот эндпоинт использует кабинет.
-        if request.media:
-            _ensure_media_caption_fits(request.media.caption or request.message_text.strip())
+        # Отдельная подпись к медиа проверяется на лимит 1024; основной message_text разрешён до 4000
+        if request.media and request.media.caption:
+            _ensure_media_caption_fits(request.media.caption)
 
         # Validate buttons
         if not _validate_buttons(request.selected_buttons):

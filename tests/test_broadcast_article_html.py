@@ -105,3 +105,26 @@ def test_broadcast_standard_text_not_forced_to_rich():
         "Параграф 2"
     )
     assert build_broadcast_rich_html(standard_text) is None
+
+
+def test_broadcast_article_block_spacing():
+    """Verify that paragraphs and blocks in rich articles have distinct spacer paragraphs between them."""
+    article_text = """<article>
+<h4>Персональные выделенные серверы</h4>
+<p>Текст первого блока</p>
+<p>Текст второго блока</p>
+<h4>Преимущества:</h4>
+<ul>
+  <li>Чистый IP</li>
+  <li>Высокая скорость</li>
+</ul>
+</article>"""
+    rich_html = build_broadcast_rich_html(article_text)
+    assert rich_html is not None
+    # Paragraphs must have spacer paragraph between them
+    assert '<p>Текст первого блока</p><p><br/></p><p>Текст второго блока</p>' in rich_html
+    # Header should have spacer before it
+    assert '<p><br/></p><h4>Преимущества:</h4>' in rich_html
+    # Lists should have spacer after header
+    assert '<h4>Преимущества:</h4><p><br/></p><p>• Чистый IP' in rich_html
+

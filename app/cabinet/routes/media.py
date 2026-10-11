@@ -163,8 +163,8 @@ class MediaUploadResponse(BaseModel):
     media_url: str
 
 
-def _resolve_target_chat_id() -> int:
-    """Get chat ID for uploading files (notification channel or first admin)."""
+def _resolve_target_chat_id(user: User | None = None) -> int:
+    """Get chat ID for uploading files (notification channel, first admin, or user)."""
     chat_id = settings.get_admin_notifications_chat_id()
     if chat_id is not None:
         return chat_id
@@ -173,10 +173,14 @@ def _resolve_target_chat_id() -> int:
     if admin_ids:
         return admin_ids[0]
 
+    if user and user.telegram_id:
+        return user.telegram_id
+
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail='No chat configured for file uploads',
     )
+
 
 
 def _build_media_url(request: Request, file_id: str) -> str:
@@ -262,7 +266,7 @@ async def upload_media(
             detail='This file type is not allowed',
         )
 
-    target_chat_id = _resolve_target_chat_id()
+    target_chat_id = _resolve_target_chat_id(user)
     upload = BufferedInputFile(file_bytes, filename=file.filename or 'upload')
 
     bot = create_bot()
@@ -322,11 +326,11 @@ async def upload_media(
             )
             media = message.document
 
-        # Delete the staging message immediately — file_id persists after deletion
-        try:
-            await bot.delete_message(chat_id=target_chat_id, message_id=message.message_id)
-        except Exception:
-            pass  # Best-effort cleanup — file_id is already captured
+        # Preserve the staging message in the channel/chat.
+        # Deleting the message immediately invalidates Telegram's file_reference
+        # inside file_id in MTProto DC, which causes subsequent broadcasts to fail
+        # with 'wrong remote file identifier' or 'file is temporarily unavailable'.
+        # Since the message was sent with disable_notification=True, it causes no pings.
 
         if media_type_normalized == 'voice':
             dur = getattr(media, 'duration', None)
