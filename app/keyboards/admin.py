@@ -2266,6 +2266,11 @@ BROADCAST_BUTTONS = {
         'text_key': 'ADMIN_BROADCAST_BUTTON_SUPPORT',
         'callback': 'menu_support',
     },
+    'servers': {
+        'default_text': '🖥️ Выделенные серверы',
+        'text_key': 'ADMIN_BROADCAST_BUTTON_SERVERS',
+        'callback': 'menu_servers',
+    },
     'home': {
         'default_text': '🏠 На главную',
         'text_key': 'ADMIN_BROADCAST_BUTTON_HOME',
@@ -2277,6 +2282,7 @@ BROADCAST_BUTTON_ROWS: tuple[tuple[str, ...], ...] = (
     ('balance', 'referrals'),
     ('promocode', 'connect'),
     ('subscription', 'support'),
+    ('servers',),
     ('home',),
 )
 

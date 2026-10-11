@@ -84,6 +84,7 @@ CABINET_MINIAPP_BUTTON_KEYS = {
     'connect',
     'subscription',
     'support',
+    'servers',
 }
 
 

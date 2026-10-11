@@ -57,6 +57,7 @@ CALLBACK_TO_CABINET_PATH: dict[str, str] = {
     'menu_support': '/support',
     'menu_info': '/info',
     'menu_profile': '/profile',
+    'menu_servers': '/servers',
     # NB: ``back_to_menu`` is intentionally NOT mapped here.
     # The callback semantically means "return to the bot's main menu"
     # — every other call site in the codebase uses raw
@@ -114,6 +115,7 @@ BUTTON_KEY_TO_CABINET_PATH: dict[str, str] = {
     'connect': '/subscription',
     'subscription': '/subscription',
     'support': '/support',
+    'servers': '/servers',
 }
 
 # Valid style values accepted by the Telegram Bot API.

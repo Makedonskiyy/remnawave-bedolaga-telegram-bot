@@ -51,6 +51,7 @@ from app.utils.telegram_html import (
     split_telegram_text,
     stored_html_to_telegram_pages,
 )
+from app.utils.miniapp_buttons import build_cabinet_url
 from app.utils.timezone import format_local_datetime
 
 
@@ -1758,3 +1759,30 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(add_traffic, F.data.startswith('add_traffic_'))
 
     dp.callback_query.register(handle_activate_button, F.data == 'activate_button')
+
+    dp.callback_query.register(show_servers_menu, F.data == 'menu_servers')
+
+
+async def show_servers_menu(callback: types.CallbackQuery, db: AsyncSession) -> None:
+    """Fallback handler for menu_servers callback."""
+    await callback.answer()
+    url = build_cabinet_url('/servers')
+    if url:
+        builder = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [types.InlineKeyboardButton(text='🖥️ Открыть серверы', web_app=types.WebAppInfo(url=url))],
+                [types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')],
+            ]
+        )
+        await callback.message.answer(
+            '🖥️ <b>Персональные выделенные серверы</b>\n\n'
+            'Управление личными серверами доступно в мини-приложении:',
+            reply_markup=builder,
+            parse_mode='HTML',
+        )
+    else:
+        await callback.message.answer(
+            '🖥️ <b>Персональные выделенные серверы</b>\n\n'
+            'Раздел доступен в личном кабинете.',
+            parse_mode='HTML',
+        )
