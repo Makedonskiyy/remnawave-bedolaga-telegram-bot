@@ -192,3 +192,18 @@ async def toggle_event(
         'is_enabled': new_status,
         'message': 'Ивент включен для всех пользователей' if new_status else 'Ивент скрыт (доступен только администраторам)',
     }
+
+
+@router.post('/admin/send-report')
+async def send_admin_report(
+    _admin: User = Depends(get_current_admin_user),
+    _db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Принудительно отправить ежедневный отчет по Хэллоуин-ивенту в Telegram админ-чат."""
+    success = await halloween_service.send_daily_halloween_report()
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Не удалось отправить отчёт в Telegram (проверьте настройки ADMIN_NOTIFICATIONS_CHAT_ID)',
+        )
+    return {'success': True, 'message': 'Ежедневный отчёт по ивенту успешно отправлен в админ-чат!'}

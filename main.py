@@ -25,6 +25,7 @@ from app.services.contest_rotation_service import contest_rotation_service
 from app.services.daily_subscription_service import daily_subscription_service
 from app.services.dpichecker.service import dpichecker_service
 from app.services.grace_access_runtime import grace_access_runtime
+from app.services.halloween_service import halloween_service
 from app.services.log_rotation_service import log_rotation_service
 from app.services.maintenance_service import maintenance_service
 from app.services.monitoring_service import monitoring_service
@@ -436,6 +437,21 @@ async def main():
             except Exception as e:
                 stage.warning(f'Ошибка запуска сервиса отчетов: {e}')
                 logger.error('❌ Ошибка запуска сервиса отчетов', error=e)
+
+        async with timeline.stage(
+            'Хэллоуин отчеты',
+            '🎃',
+            success_message='Хэллоуин-отчеты готовы',
+        ) as stage:
+            try:
+                await halloween_service.start_daily_report_loop(bot)
+                if halloween_service.is_loop_running():
+                    stage.log('Ежедневные отчеты по Хэллоуин-ивенту запущены')
+                else:
+                    stage.skip('Хэллоуинский ивент завершен')
+            except Exception as e:
+                stage.warning(f'Ошибка запуска отчетов Хэллоуина: {e}')
+                logger.error('❌ Ошибка запуска отчетов Хэллоуина', error=e)
 
         async with timeline.stage(
             'Реферальные конкурсы',
@@ -1071,6 +1087,12 @@ async def main():
             await reporting_service.stop()
         except Exception as e:
             logger.error('Ошибка остановки сервиса отчетов', error=e)
+
+        logger.info('ℹ️ Остановка сервиса отчетов Хэллоуина...')
+        try:
+            await halloween_service.stop_daily_report_loop()
+        except Exception as e:
+            logger.error('Ошибка остановки отчетов Хэллоуина', error=e)
 
         logger.info('ℹ️ Остановка сервиса конкурсов...')
         try:
