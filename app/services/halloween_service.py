@@ -73,7 +73,7 @@ class HalloweenService:
         """Проверить, включен ли ивент глобально (для всех пользователей)."""
         res = await db.execute(select(HalloweenConfig.is_enabled).order_by(HalloweenConfig.id.asc()).limit(1))
         enabled = res.scalar_one_or_none()
-        return bool(enabled)
+        return bool(enabled or getattr(settings, 'HALLOWEEN_EVENT_ENABLED', False))
 
     @classmethod
     async def set_event_enabled(cls, db: AsyncSession, enabled: bool) -> bool:
@@ -86,6 +86,7 @@ class HalloweenService:
         else:
             config.is_enabled = enabled
             config.updated_at = datetime.now(UTC)
+        settings.HALLOWEEN_EVENT_ENABLED = enabled
         await db.commit()
         await db.refresh(config)
         logger.info('🎃 Хэллоуин ивент переключен', is_enabled=config.is_enabled)

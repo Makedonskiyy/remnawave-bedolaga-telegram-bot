@@ -541,6 +541,9 @@ class Settings(BaseSettings):
     # Настройки конструктора меню (API)
     MENU_LAYOUT_ENABLED: bool = False  # Включить управление меню через API
 
+    # Хэллоуинский ивент (тапалка, сладость или гадость, награды)
+    HALLOWEEN_EVENT_ENABLED: bool = False
+
     # Настройки мониторинга трафика
     TRAFFIC_MONITORING_ENABLED: bool = False  # Глобальный переключатель (для обратной совместимости)
     TRAFFIC_THRESHOLD_GB_PER_DAY: float = 10.0  # Порог трафика в ГБ за сутки (для обратной совместимости)
