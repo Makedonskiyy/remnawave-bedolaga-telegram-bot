@@ -16,6 +16,7 @@ from app.config import settings
 from app.database.crud.subscription import get_subscriptions_statistics
 from app.database.crud.transaction import REAL_PAYMENT_METHODS
 from app.database.database import AsyncSessionLocal
+from app.services.halloween_service import halloween_service
 from app.database.models import (
     Subscription,
     SubscriptionConversion,
@@ -252,6 +253,7 @@ class ReportingService:
             stats = await self._collect_period_stats(session, start_utc, end_utc)
             top_referrers = await self._get_top_referrers(session, start_utc, end_utc, limit=5)
             usage = await self._get_user_usage_stats(session)
+            hw_stats = await halloween_service.get_period_stats(session, start_utc, end_utc)
 
         conversion_rate = (
             (stats['trial_to_paid_conversions'] / stats['new_trials'] * 100) if stats['new_trials'] > 0 else 0.0
@@ -315,6 +317,18 @@ class ReportingService:
             '👤 <b>Активность пользователей</b>',
             f'• Пользователей с активной платной подпиской: {usage["active_paid_users"]}',
             f'• Пользователей, ни разу не подключившихся: {usage["never_connected_users"]}',
+            '',
+        ]
+
+        # Хэллоуинский ивент
+        lines += [
+            '🎃 <b>Хэллоуинский ивент</b>',
+            f'• Всего участников в ивенте: <b>{hw_stats["total_players"]}</b>',
+            f'• Всего натапано за все время: <b>{hw_stats["total_earned_all"]:,} мин</b>'.replace(',', ' '),
+            f'• Игр «Сладость или гадость» за период: <b>{hw_stats["period_games"]}</b>',
+            f'  └ Сладостей: <b>{hw_stats["period_treats"]}</b> | Гадостей: <b>{hw_stats["period_tricks"]}</b>',
+            f'  └ Выпало бонусных минут: <b>+{hw_stats["period_minutes_from_treats"]:,} мин</b>'.replace(',', ' '),
+            f'• Обменов на подписку за период: <b>{hw_stats["period_claims_count"]}</b> (выдано <b>{hw_stats["period_days_claimed"]} дн.</b> VPN)',
             '',
         ]
 

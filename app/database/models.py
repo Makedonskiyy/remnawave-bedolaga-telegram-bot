@@ -5560,3 +5560,44 @@ class HalloweenUserState(Base):
 
     user = relationship('User', backref=backref('halloween_state', uselist=False))
 
+
+class HalloweenConfig(Base):
+    """Глобальная конфигурация хэллоуинского ивента (включение/отключение для обычных пользователей)."""
+
+    __tablename__ = 'halloween_config'
+
+    id = Column(Integer, primary_key=True)
+    is_enabled = Column(Boolean, default=False, nullable=False)
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class HalloweenGameLog(Base):
+    """Лог сыгранных мини-игр 'Сладость или гадость'."""
+
+    __tablename__ = 'halloween_game_logs'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    is_treat = Column(Boolean, nullable=False)  # True = сладость, False = гадость
+    chosen_pumpkin = Column(Integer, nullable=False)  # Номер выбранной тыквы (1, 2, 3)
+    reward_type = Column(String(50), nullable=False)  # minutes, boost, promocode, curse
+    reward_title = Column(String(255), nullable=False)
+    reward_value = Column(Integer, default=0, nullable=False)
+    created_at = Column(AwareDateTime(), default=func.now(), nullable=False, index=True)
+
+    user = relationship('User', backref=backref('halloween_game_logs', lazy='dynamic'))
+
+
+class HalloweenExchangeLog(Base):
+    """Лог обменов натапанных минут на дни подписки."""
+
+    __tablename__ = 'halloween_exchange_logs'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    days_claimed = Column(Integer, nullable=False)
+    minutes_spent = Column(Integer, nullable=False)
+    created_at = Column(AwareDateTime(), default=func.now(), nullable=False, index=True)
+
+    user = relationship('User', backref=backref('halloween_exchange_logs', lazy='dynamic'))
+
