@@ -5520,3 +5520,43 @@ class DedicatedServerOrder(Base):
     def is_pending(self) -> bool:
         return self.status in (DedicatedServerStatus.PENDING.value, DedicatedServerStatus.SETTING_UP.value)
 
+
+class HalloweenUserState(Base):
+    """Состояние пользователя в Хэллоуинском ивенте (тапалка, прокачка, сладость/гадость)."""
+
+    __tablename__ = 'halloween_user_state'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), unique=True, nullable=False, index=True)
+
+    # Прогресс и балансы
+    earned_minutes = Column(Integer, default=0, nullable=False)     # Всего нафармлено минут
+    available_minutes = Column(Integer, default=0, nullable=False)  # Доступно минут для улучшений и обмена
+    level = Column(Integer, default=1, nullable=False)              # Уровень прокачки (1-5)
+
+    # Энергия для кликера (макс 1000)
+    energy = Column(Integer, default=1000, nullable=False)
+    max_energy = Column(Integer, default=1000, nullable=False)
+    last_energy_updated_at = Column(AwareDateTime(), default=func.now(), nullable=False)
+
+    # Пассивный доход
+    last_passive_collected_at = Column(AwareDateTime(), default=func.now(), nullable=False)
+
+    # Буст x2 (от сладости)
+    boost_active_until = Column(AwareDateTime(), nullable=True)
+
+    # Проклятие (от гадости)
+    is_cursed = Column(Boolean, default=False, nullable=False)
+    cursed_frozen_minutes = Column(Integer, default=0, nullable=False)
+
+    # Мини-игра "Сладость или гадость"
+    last_trick_or_treat_at = Column(AwareDateTime(), nullable=True)
+
+    # Обмен на подписку (лимит 14 дней на пользователя)
+    claimed_days = Column(Integer, default=0, nullable=False)
+
+    created_at = Column(AwareDateTime(), default=func.now(), nullable=False)
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now(), nullable=False)
+
+    user = relationship('User', backref=backref('halloween_state', uselist=False))
+
