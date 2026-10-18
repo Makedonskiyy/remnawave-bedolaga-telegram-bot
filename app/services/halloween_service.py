@@ -229,14 +229,20 @@ class HalloweenService:
         return cls.sync_user_state(state)
 
     @classmethod
-    async def play_trick_or_treat(cls, db: AsyncSession, state: HalloweenUserState, chosen_pumpkin: int) -> dict:
+    async def play_trick_or_treat(
+        cls,
+        db: AsyncSession,
+        state: HalloweenUserState,
+        chosen_pumpkin: int,
+        ignore_cooldown: bool = False,
+    ) -> dict:
         """Сыграть в 'Сладость или гадость' (выбор из 3 тыкв). Записывает лог в HalloweenGameLog."""
         now = datetime.now(UTC)
 
-        if state.is_cursed:
+        if state.is_cursed and not ignore_cooldown:
             raise ValueError('Вы уже заколдованы! Поделитесь ссылкой, чтобы снять проклятие.')
 
-        if state.last_trick_or_treat_at:
+        if state.last_trick_or_treat_at and not ignore_cooldown:
             elapsed = (now - state.last_trick_or_treat_at).total_seconds()
             if elapsed < TRICK_OR_TREAT_COOLDOWN_SECONDS:
                 remaining = int(TRICK_OR_TREAT_COOLDOWN_SECONDS - elapsed)

@@ -132,9 +132,12 @@ async def play_trick_or_treat(
 ):
     """Сыграть в 'Сладость или гадость' (выбрать одну из 3 тыкв)."""
     await _ensure_event_accessible(user, db)
+    is_admin = await _check_user_is_admin(user, db)
     state = await get_or_create_halloween_state(db, user.id)
     try:
-        return await halloween_service.play_trick_or_treat(db, state, request.chosen_pumpkin)
+        return await halloween_service.play_trick_or_treat(
+            db, state, request.chosen_pumpkin, ignore_cooldown=is_admin
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
