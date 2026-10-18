@@ -90,8 +90,10 @@ def _create_base_app(lifespan: Any = None) -> FastAPI:
                 )
             if settings.is_cabinet_enabled():
                 from app.cabinet.routes import router as cabinet_router
+                from app.cabinet.routes.halloween import router as halloween_router
 
                 app.include_router(cabinet_router)
+                app.include_router(halloween_router)
             else:
                 app.include_router(apple_iap_only_router)
 

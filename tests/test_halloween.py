@@ -126,3 +126,22 @@ async def test_halloween_claim_reward_limit(mock_user, mock_state):
         # Trying to claim more should fail due to 14 days limit
         with pytest.raises(ValueError, match='Превышен лимит'):
             await halloween_service.claim_reward_days(db, mock_user, mock_state, days=1)
+
+
+@pytest.mark.asyncio
+async def test_halloween_admin_toggle_and_stats():
+    db = AsyncMock()
+    # Test fallback toggle when db throws error
+    with patch.object(halloween_service, 'ensure_tables_exist', side_effect=Exception('DB offline')):
+        status_on = await halloween_service.set_event_enabled(db, True)
+        assert status_on is True
+
+        # Test fallback stats when queries throw
+        stats = await halloween_service.get_admin_statistics(db)
+        assert stats['is_enabled'] is True
+        assert stats['total_players'] == 0
+        assert stats['total_games'] == 0
+
+        status_off = await halloween_service.set_event_enabled(db, False)
+        assert status_off is False
+

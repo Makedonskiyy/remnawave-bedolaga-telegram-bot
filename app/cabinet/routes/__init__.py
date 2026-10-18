@@ -61,7 +61,7 @@ from .contests import router as contests_router
 from .coupon import router as coupon_router
 from .dedicated_servers import router as dedicated_servers_router
 from .gift import router as gift_router
-from .halloween import router as halloween_router
+from .halloween import admin_subrouter as halloween_admin_router, router as halloween_router
 from .info import router as info_router
 from .info_pages import router as info_pages_router
 from .landing import router as landing_router
@@ -140,6 +140,7 @@ router.include_router(wheel_router)
 
 # Halloween event routes
 router.include_router(halloween_router)
+router.include_router(halloween_admin_router)
 
 # Gift routes
 router.include_router(gift_router)

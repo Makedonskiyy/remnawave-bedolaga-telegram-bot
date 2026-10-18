@@ -35,18 +35,58 @@ class ToggleEventRequest(BaseModel):
     enabled: bool
 
 
+from app.config import settings
+
+
 async def _check_user_is_admin(user: User | None, db: AsyncSession) -> bool:
     if not user:
         return False
-    if is_user_admin_by_env(user).is_admin:
-        return True
+    # 1. Config check (ADMIN_IDS / ADMIN_EMAILS)
+    try:
+        user_email = getattr(user, 'email', None)
+        if settings.is_admin(telegram_id=user.telegram_id, email=user_email):
+            return True
+    except Exception:
+        pass
+    # 2. Trusted ENV check
+    try:
+        if is_user_admin_by_env(user).is_admin:
+            return True
+    except Exception:
+        pass
+    # 3. RBAC max_level > 0
     try:
         from app.database.crud.rbac import UserRoleCRUD
 
         _permissions, _role_names, max_level = await UserRoleCRUD.get_user_permissions(db, user.id)
-        return max_level > 0
+        if max_level > 0:
+            return True
     except Exception:
-        return False
+        pass
+    # 4. Permission engine check (admin permission)
+    try:
+        from app.services.permission_service import PermissionService
+
+        allowed, _ = await PermissionService.check_permission(db, user, 'stats:read')
+        if allowed:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+async def get_halloween_admin_user(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> User:
+    """Гарантирует доступ только администраторам (по конфигу, env или RBAC)."""
+    is_admin = await _check_user_is_admin(user, db)
+    if not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Требуются права администратора для управления Хэллоуинским ивентом',
+        )
+    return user
 
 
 async def _ensure_event_accessible(user: User, db: AsyncSession) -> None:
@@ -175,7 +215,7 @@ async def claim_reward(
 
 @router.get('/admin/stats')
 async def get_admin_stats(
-    _admin: User = Depends(get_current_admin_user),
+    _admin: User = Depends(get_halloween_admin_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Получить сводную статистику по Хэллоуинскому ивенту (для админ-панели)."""
@@ -185,7 +225,7 @@ async def get_admin_stats(
 @router.post('/admin/toggle')
 async def toggle_event(
     request: ToggleEventRequest,
-    _admin: User = Depends(get_current_admin_user),
+    _admin: User = Depends(get_halloween_admin_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Включить или выключить видимость ивента для обычных пользователей."""
@@ -199,7 +239,7 @@ async def toggle_event(
 
 @router.post('/admin/send-report')
 async def send_admin_report(
-    _admin: User = Depends(get_current_admin_user),
+    _admin: User = Depends(get_halloween_admin_user),
     _db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Принудительно отправить ежедневный отчет по Хэллоуин-ивенту в Telegram админ-чат."""
@@ -210,3 +250,47 @@ async def send_admin_report(
             detail='Не удалось отправить отчёт в Telegram (проверьте настройки ADMIN_NOTIFICATIONS_CHAT_ID)',
         )
     return {'success': True, 'message': 'Ежедневный отчёт по ивенту успешно отправлен в админ-чат!'}
+
+
+# ============================================================================
+# Алиас-роутер для путей /admin/halloween/*
+# ============================================================================
+
+admin_subrouter = APIRouter(prefix='/admin/halloween', tags=['Halloween Event Admin'])
+
+
+@admin_subrouter.get('/stats')
+async def admin_subrouter_get_stats(
+    _admin: User = Depends(get_halloween_admin_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    return await halloween_service.get_admin_statistics(db)
+
+
+@admin_subrouter.post('/toggle')
+async def admin_subrouter_toggle(
+    request: ToggleEventRequest,
+    _admin: User = Depends(get_halloween_admin_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    new_status = await halloween_service.set_event_enabled(db, request.enabled)
+    return {
+        'success': True,
+        'is_enabled': new_status,
+        'message': 'Ивент включен для всех пользователей' if new_status else 'Ивент скрыт (доступен только администраторам)',
+    }
+
+
+@admin_subrouter.post('/send-report')
+async def admin_subrouter_send_report(
+    _admin: User = Depends(get_halloween_admin_user),
+    _db: AsyncSession = Depends(get_cabinet_db),
+):
+    success = await halloween_service.send_daily_halloween_report()
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Не удалось отправить отчёт в Telegram (проверьте настройки ADMIN_NOTIFICATIONS_CHAT_ID)',
+        )
+    return {'success': True, 'message': 'Ежедневный отчёт по ивенту успешно отправлен в админ-чат!'}
+

@@ -69,28 +69,67 @@ class HalloweenService:
         return max(0, int(remaining))
 
     @classmethod
+    async def ensure_tables_exist(cls, db: AsyncSession) -> None:
+        """Гарантирует существование таблиц ивента в БД при отсутствии миграций."""
+        try:
+            from app.database.database import engine
+            from app.database.models import (
+                HalloweenConfig,
+                HalloweenExchangeLog,
+                HalloweenGameLog,
+                HalloweenUserState,
+            )
+
+            async with engine.begin() as conn:
+                await conn.run_sync(
+                    HalloweenConfig.metadata.create_all,
+                    tables=[
+                        HalloweenConfig.__table__,
+                        HalloweenUserState.__table__,
+                        HalloweenGameLog.__table__,
+                        HalloweenExchangeLog.__table__,
+                    ],
+                )
+        except Exception as e:
+            logger.debug('Ensure halloween tables notice', error=str(e))
+
+    @classmethod
     async def is_event_enabled(cls, db: AsyncSession) -> bool:
         """Проверить, включен ли ивент глобально (для всех пользователей)."""
-        res = await db.execute(select(HalloweenConfig.is_enabled).order_by(HalloweenConfig.id.asc()).limit(1))
-        enabled = res.scalar_one_or_none()
-        return bool(enabled or getattr(settings, 'HALLOWEEN_EVENT_ENABLED', False))
+        try:
+            res = await db.execute(select(HalloweenConfig.is_enabled).order_by(HalloweenConfig.id.asc()).limit(1))
+            enabled = res.scalar_one_or_none()
+            if enabled is not None:
+                return bool(enabled)
+        except Exception as e:
+            logger.warning('Failed to query HalloweenConfig from DB, using memory fallback', error=str(e))
+        return bool(getattr(settings, 'HALLOWEEN_EVENT_ENABLED', False))
 
     @classmethod
     async def set_event_enabled(cls, db: AsyncSession, enabled: bool) -> bool:
         """Включить или выключить хэллоуинский ивент."""
-        res = await db.execute(select(HalloweenConfig).order_by(HalloweenConfig.id.asc()).limit(1))
-        config = res.scalar_one_or_none()
-        if not config:
-            config = HalloweenConfig(is_enabled=enabled)
-            db.add(config)
-        else:
-            config.is_enabled = enabled
-            config.updated_at = datetime.now(UTC)
         settings.HALLOWEEN_EVENT_ENABLED = enabled
-        await db.commit()
-        await db.refresh(config)
-        logger.info('🎃 Хэллоуин ивент переключен', is_enabled=config.is_enabled)
-        return config.is_enabled
+        try:
+            await cls.ensure_tables_exist(db)
+            res = await db.execute(select(HalloweenConfig).order_by(HalloweenConfig.id.asc()).limit(1))
+            config = res.scalar_one_or_none()
+            if not config:
+                config = HalloweenConfig(is_enabled=enabled)
+                db.add(config)
+            else:
+                config.is_enabled = enabled
+                config.updated_at = datetime.now(UTC)
+            await db.commit()
+            await db.refresh(config)
+            logger.info('🎃 Хэллоуин ивент переключен', is_enabled=config.is_enabled)
+            return bool(config.is_enabled)
+        except Exception as e:
+            logger.error('Failed to persist HalloweenConfig to DB, persisted in settings', error=str(e), exc_info=True)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            return bool(enabled)
 
     @classmethod
     def sync_user_state(cls, state: HalloweenUserState) -> dict:
@@ -430,157 +469,190 @@ class HalloweenService:
     @classmethod
     async def get_admin_statistics(cls, db: AsyncSession) -> dict:
         """Собирает полную статистику по ивенту: игроки, минуты, игры, награды, обмены, топ игроков."""
-        # 1. Общие показатели по игрокам и минутам
-        totals_q = await db.execute(
-            select(
-                func.count(HalloweenUserState.id),
-                func.coalesce(func.sum(HalloweenUserState.earned_minutes), 0),
-                func.coalesce(func.sum(HalloweenUserState.available_minutes), 0),
-                func.coalesce(func.sum(HalloweenUserState.claimed_days), 0),
+        try:
+            await cls.ensure_tables_exist(db)
+        except Exception:
+            pass
+
+        try:
+            # 1. Общие показатели по игрокам и минутам
+            totals_q = await db.execute(
+                select(
+                    func.count(HalloweenUserState.id),
+                    func.coalesce(func.sum(HalloweenUserState.earned_minutes), 0),
+                    func.coalesce(func.sum(HalloweenUserState.available_minutes), 0),
+                    func.coalesce(func.sum(HalloweenUserState.claimed_days), 0),
+                )
             )
-        )
-        total_players, total_earned_minutes, total_available_minutes, total_claimed_days = totals_q.one()
+            total_players, total_earned_minutes, total_available_minutes, total_claimed_days = totals_q.one()
 
-        # 2. Статистика по мини-играм
-        games_q = await db.execute(
-            select(
-                func.count(HalloweenGameLog.id),
-                func.coalesce(func.sum(case((HalloweenGameLog.is_treat == True, 1), else_=0)), 0),
-                func.coalesce(func.sum(case((HalloweenGameLog.is_treat == False, 1), else_=0)), 0),
+            # 2. Статистика по мини-играм
+            games_q = await db.execute(
+                select(
+                    func.count(HalloweenGameLog.id),
+                    func.coalesce(func.sum(case((HalloweenGameLog.is_treat == True, 1), else_=0)), 0),
+                    func.coalesce(func.sum(case((HalloweenGameLog.is_treat == False, 1), else_=0)), 0),
+                )
             )
-        )
-        total_games, total_treats, total_tricks = games_q.one()
+            total_games, total_treats, total_tricks = games_q.one()
 
-        # 3. Разбивка наград по типам (minutes, boost, promo, curse, uncurse)
-        rewards_breakdown_q = await db.execute(
-            select(
-                HalloweenGameLog.reward_type,
-                func.count(HalloweenGameLog.id),
-                func.coalesce(func.sum(HalloweenGameLog.reward_value), 0),
-            ).group_by(HalloweenGameLog.reward_type)
-        )
-        rewards_breakdown = [
-            {'reward_type': row[0], 'count': int(row[1]), 'total_value': int(row[2])}
-            for row in rewards_breakdown_q.all()
-        ]
-
-        # 4. Распределение игроков по уровням
-        levels_q = await db.execute(
-            select(HalloweenUserState.level, func.count(HalloweenUserState.id)).group_by(HalloweenUserState.level)
-        )
-        level_distribution = {int(row[0]): int(row[1]) for row in levels_q.all()}
-
-        # 5. Статистика за сегодня (Europe/Moscow)
-        moscow_tz = ZoneInfo('Europe/Moscow')
-        now_msk = datetime.now(moscow_tz)
-        today_start_msk = datetime.combine(now_msk.date(), datetime_time.min, tzinfo=moscow_tz)
-        today_start_utc = today_start_msk.astimezone(UTC)
-
-        today_games_q = await db.execute(
-            select(
-                func.count(HalloweenGameLog.id),
-                func.coalesce(func.sum(case((HalloweenGameLog.is_treat == True, 1), else_=0)), 0),
-                func.coalesce(func.sum(case((HalloweenGameLog.is_treat == False, 1), else_=0)), 0),
-            ).where(HalloweenGameLog.created_at >= today_start_utc)
-        )
-        today_games, today_treats, today_tricks = today_games_q.one()
-
-        today_claims_q = await db.execute(
-            select(
-                func.count(HalloweenExchangeLog.id),
-                func.coalesce(func.sum(HalloweenExchangeLog.days_claimed), 0),
-                func.coalesce(func.sum(HalloweenExchangeLog.minutes_spent), 0),
-            ).where(HalloweenExchangeLog.created_at >= today_start_utc)
-        )
-        today_claims_count, today_claims_days, today_claims_minutes = today_claims_q.one()
-
-        today_new_players_q = await db.execute(
-            select(func.count(HalloweenUserState.id)).where(HalloweenUserState.created_at >= today_start_utc)
-        )
-        today_new_players = int(today_new_players_q.scalar() or 0)
-
-        # 6. Топ 10 игроков по заработанным минутам
-        top_players_q = await db.execute(
-            select(HalloweenUserState, User)
-            .join(User, HalloweenUserState.user_id == User.id)
-            .order_by(HalloweenUserState.earned_minutes.desc())
-            .limit(10)
-        )
-        top_players = []
-        for state_row, user_row in top_players_q.all():
-            name = (
-                f'@{user_row.username}'
-                if user_row.username
-                else (user_row.first_name or f'ID {user_row.telegram_id or user_row.id}')
+            # 3. Разбивка наград по типам (minutes, boost, promo, curse, uncurse)
+            rewards_breakdown_q = await db.execute(
+                select(
+                    HalloweenGameLog.reward_type,
+                    func.count(HalloweenGameLog.id),
+                    func.coalesce(func.sum(HalloweenGameLog.reward_value), 0),
+                ).group_by(HalloweenGameLog.reward_type)
             )
-            top_players.append({
-                'user_id': user_row.id,
-                'name': name,
-                'earned_minutes': state_row.earned_minutes,
-                'available_minutes': state_row.available_minutes,
-                'level': state_row.level,
-                'claimed_days': state_row.claimed_days,
-            })
+            rewards_breakdown = [
+                {'reward_type': row[0], 'count': int(row[1]), 'total_value': int(row[2])}
+                for row in rewards_breakdown_q.all()
+            ]
 
-        # 7. Последние 20 игр
-        recent_games_q = await db.execute(
-            select(HalloweenGameLog, User)
-            .join(User, HalloweenGameLog.user_id == User.id)
-            .order_by(HalloweenGameLog.created_at.desc())
-            .limit(20)
-        )
-        recent_games = []
-        for log_row, user_row in recent_games_q.all():
-            name = (
-                f'@{user_row.username}'
-                if user_row.username
-                else (user_row.first_name or f'ID {user_row.telegram_id or user_row.id}')
+            # 4. Распределение игроков по уровням
+            levels_q = await db.execute(
+                select(HalloweenUserState.level, func.count(HalloweenUserState.id)).group_by(HalloweenUserState.level)
             )
-            recent_games.append({
-                'id': log_row.id,
-                'user_id': user_row.id,
-                'user_name': name,
-                'is_treat': log_row.is_treat,
-                'chosen_pumpkin': log_row.chosen_pumpkin,
-                'reward_type': log_row.reward_type,
-                'reward_title': log_row.reward_title,
-                'reward_value': log_row.reward_value,
-                'created_at': log_row.created_at.isoformat() if log_row.created_at else None,
-            })
+            level_distribution = {int(row[0]): int(row[1]) for row in levels_q.all()}
 
-        is_enabled = await cls.is_event_enabled(db)
-        total_g = int(total_games or 0)
-        treat_pct = round((int(total_treats or 0) / total_g * 100), 1) if total_g > 0 else 0.0
-        trick_pct = round((int(total_tricks or 0) / total_g * 100), 1) if total_g > 0 else 0.0
+            # 5. Статистика за сегодня (Europe/Moscow)
+            moscow_tz = ZoneInfo('Europe/Moscow')
+            now_msk = datetime.now(moscow_tz)
+            today_start_msk = datetime.combine(now_msk.date(), datetime_time.min, tzinfo=moscow_tz)
+            today_start_utc = today_start_msk.astimezone(UTC)
 
-        today_g = int(today_games or 0)
-        today_treat_pct = round((int(today_treats or 0) / today_g * 100), 1) if today_g > 0 else 0.0
-        today_trick_pct = round((int(today_tricks or 0) / today_g * 100), 1) if today_g > 0 else 0.0
+            today_games_q = await db.execute(
+                select(
+                    func.count(HalloweenGameLog.id),
+                    func.coalesce(func.sum(case((HalloweenGameLog.is_treat == True, 1), else_=0)), 0),
+                    func.coalesce(func.sum(case((HalloweenGameLog.is_treat == False, 1), else_=0)), 0),
+                ).where(HalloweenGameLog.created_at >= today_start_utc)
+            )
+            today_games, today_treats, today_tricks = today_games_q.one()
 
-        return {
-            'is_enabled': is_enabled,
-            'total_players': int(total_players or 0),
-            'total_earned_minutes': int(total_earned_minutes or 0),
-            'total_available_minutes': int(total_available_minutes or 0),
-            'total_claimed_days': int(total_claimed_days or 0),
-            'total_games': total_g,
-            'total_treats': int(total_treats or 0),
-            'total_tricks': int(total_tricks or 0),
-            'treat_percentage': treat_pct,
-            'trick_percentage': trick_pct,
-            'today_games': today_g,
-            'today_treats': int(today_treats or 0),
-            'today_tricks': int(today_tricks or 0),
-            'today_treat_percentage': today_treat_pct,
-            'today_trick_percentage': today_trick_pct,
-            'today_claims_days': int(today_claims_days or 0),
-            'today_claims_count': int(today_claims_count or 0),
-            'today_new_players': today_new_players,
-            'level_distribution': level_distribution,
-            'rewards_breakdown': rewards_breakdown,
-            'top_players': top_players,
-            'recent_games': recent_games,
-        }
+            today_claims_q = await db.execute(
+                select(
+                    func.count(HalloweenExchangeLog.id),
+                    func.coalesce(func.sum(HalloweenExchangeLog.days_claimed), 0),
+                    func.coalesce(func.sum(HalloweenExchangeLog.minutes_spent), 0),
+                ).where(HalloweenExchangeLog.created_at >= today_start_utc)
+            )
+            today_claims_count, today_claims_days, today_claims_minutes = today_claims_q.one()
+
+            today_new_players_q = await db.execute(
+                select(func.count(HalloweenUserState.id)).where(HalloweenUserState.created_at >= today_start_utc)
+            )
+            today_new_players = int(today_new_players_q.scalar() or 0)
+
+            # 6. Топ 10 игроков по заработанным минутам
+            top_players_q = await db.execute(
+                select(HalloweenUserState, User)
+                .join(User, HalloweenUserState.user_id == User.id)
+                .order_by(HalloweenUserState.earned_minutes.desc())
+                .limit(10)
+            )
+            top_players = []
+            for state_row, user_row in top_players_q.all():
+                name = (
+                    f'@{user_row.username}'
+                    if user_row.username
+                    else (user_row.first_name or f'ID {user_row.telegram_id or user_row.id}')
+                )
+                top_players.append({
+                    'user_id': user_row.id,
+                    'name': name,
+                    'earned_minutes': state_row.earned_minutes,
+                    'available_minutes': state_row.available_minutes,
+                    'level': state_row.level,
+                    'claimed_days': state_row.claimed_days,
+                })
+
+            # 7. Последние 20 игр
+            recent_games_q = await db.execute(
+                select(HalloweenGameLog, User)
+                .join(User, HalloweenGameLog.user_id == User.id)
+                .order_by(HalloweenGameLog.created_at.desc())
+                .limit(20)
+            )
+            recent_games = []
+            for log_row, user_row in recent_games_q.all():
+                name = (
+                    f'@{user_row.username}'
+                    if user_row.username
+                    else (user_row.first_name or f'ID {user_row.telegram_id or user_row.id}')
+                )
+                recent_games.append({
+                    'id': log_row.id,
+                    'user_id': user_row.id,
+                    'user_name': name,
+                    'is_treat': log_row.is_treat,
+                    'chosen_pumpkin': log_row.chosen_pumpkin,
+                    'reward_type': log_row.reward_type,
+                    'reward_title': log_row.reward_title,
+                    'reward_value': log_row.reward_value,
+                    'created_at': log_row.created_at.isoformat() if log_row.created_at else None,
+                })
+
+            is_enabled = await cls.is_event_enabled(db)
+            total_g = int(total_games or 0)
+            treat_pct = round((int(total_treats or 0) / total_g * 100), 1) if total_g > 0 else 0.0
+            trick_pct = round((int(total_tricks or 0) / total_g * 100), 1) if total_g > 0 else 0.0
+
+            today_g = int(today_games or 0)
+            today_treat_pct = round((int(today_treats or 0) / today_g * 100), 1) if today_g > 0 else 0.0
+            today_trick_pct = round((int(today_tricks or 0) / today_g * 100), 1) if today_g > 0 else 0.0
+
+            return {
+                'is_enabled': is_enabled,
+                'total_players': int(total_players or 0),
+                'total_earned_minutes': int(total_earned_minutes or 0),
+                'total_available_minutes': int(total_available_minutes or 0),
+                'total_claimed_days': int(total_claimed_days or 0),
+                'total_games': total_g,
+                'total_treats': int(total_treats or 0),
+                'total_tricks': int(total_tricks or 0),
+                'treat_percentage': treat_pct,
+                'trick_percentage': trick_pct,
+                'today_games': today_g,
+                'today_treats': int(today_treats or 0),
+                'today_tricks': int(today_tricks or 0),
+                'today_treat_percentage': today_treat_pct,
+                'today_trick_percentage': today_trick_pct,
+                'today_claims_days': int(today_claims_days or 0),
+                'today_claims_count': int(today_claims_count or 0),
+                'today_new_players': today_new_players,
+                'level_distribution': level_distribution,
+                'rewards_breakdown': rewards_breakdown,
+                'top_players': top_players,
+                'recent_games': recent_games,
+            }
+        except Exception as e:
+            logger.error('Failed to calculate full admin stats, returning fallback', error=str(e), exc_info=True)
+            is_enabled = await cls.is_event_enabled(db)
+            return {
+                'is_enabled': is_enabled,
+                'total_players': 0,
+                'total_earned_minutes': 0,
+                'total_available_minutes': 0,
+                'total_claimed_days': 0,
+                'total_games': 0,
+                'total_treats': 0,
+                'total_tricks': 0,
+                'treat_percentage': 0.0,
+                'trick_percentage': 0.0,
+                'today_games': 0,
+                'today_treats': 0,
+                'today_tricks': 0,
+                'today_treat_percentage': 0.0,
+                'today_trick_percentage': 0.0,
+                'today_claims_days': 0,
+                'today_claims_count': 0,
+                'today_new_players': 0,
+                'level_distribution': {1: 0},
+                'rewards_breakdown': [],
+                'top_players': [],
+                'recent_games': [],
+            }
 
     @classmethod
     async def get_period_stats(cls, db: AsyncSession, start_utc: datetime, end_utc: datetime) -> dict:

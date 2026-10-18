@@ -285,8 +285,10 @@ def create_web_api_app(lifespan: Any = None) -> FastAPI:
     # Cabinet (Personal Account) routes
     if settings.is_cabinet_enabled():
         from app.cabinet.routes import router as cabinet_router
+        from app.cabinet.routes.halloween import router as halloween_router
 
         app.include_router(cabinet_router)
+        app.include_router(halloween_router)
     elif settings.is_apple_iap_enabled():
         app.include_router(apple_iap_only_router)
 
