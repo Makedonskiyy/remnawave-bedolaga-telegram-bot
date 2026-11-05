@@ -437,7 +437,7 @@ async def handle_admin_ticket_reply(message: types.Message, state: FSMContext, d
         media_type = 'video'
         media_file_id = message.video.file_id
         media_caption = message.caption
-    elif message.voice:
+    elif getattr(message, 'voice', None):
         media_type = 'voice'
         media_file_id = message.voice.file_id
         media_caption = message.caption

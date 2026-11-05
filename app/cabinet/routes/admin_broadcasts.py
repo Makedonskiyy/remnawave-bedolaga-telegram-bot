@@ -289,7 +289,10 @@ def _ensure_media_caption_fits(caption: str | None) -> None:
     Основной текст рассылки разрешён до 4000 символов: движок рассылки при превышении
     1024 символов автоматически отправляет медиафайл и полный текст последовательно.
     """
-    if caption and len(caption) > _MEDIA_CAPTION_LIMIT:
+    from app.utils.message_patch import caption_exceeds_telegram_limit
+
+    # count what Telegram counts (visible text after markup), not raw HTML
+    if caption and caption_exceeds_telegram_limit(caption):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(

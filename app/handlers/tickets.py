@@ -239,7 +239,7 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
         media_type = 'video'
         media_file_id = message.video.file_id
         media_caption = message.caption
-    elif message.voice:
+    elif getattr(message, 'voice', None):
         media_type = 'voice'
         media_file_id = message.voice.file_id
         media_caption = message.caption
@@ -284,7 +284,7 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
         return
 
     # Проверка длительности голосового сообщения (не менее 5 секунд)
-    if message.voice and (message.voice.duration or 0) < 5:
+    if getattr(message, 'voice', None) and (message.voice.duration or 0) < 5:
         texts = get_texts(db_user.language)
         data_prompt = await state.get_data()
         prompt_chat_id = data_prompt.get('prompt_chat_id')
@@ -818,7 +818,7 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
         media_type = 'video'
         media_file_id = message.video.file_id
         media_caption = message.caption
-    elif message.voice:
+    elif getattr(message, 'voice', None):
         media_type = 'voice'
         media_file_id = message.voice.file_id
         media_caption = message.caption
@@ -831,7 +831,7 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
         return
 
     # Проверка длительности голосового сообщения (не менее 5 секунд)
-    if message.voice and (message.voice.duration or 0) < 5:
+    if getattr(message, 'voice', None) and (message.voice.duration or 0) < 5:
         texts = get_texts(db_user.language)
         await message.answer(
             texts.t(
