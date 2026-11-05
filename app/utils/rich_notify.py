@@ -376,7 +376,7 @@ async def try_send_rich_broadcast(
 
     kwargs: dict = {
         'chat_id': chat_id,
-        'rich_message': InputRichMessage(html=rich_html, skip_entity_detection=True),
+        'rich_message': prepare_rich_message(rich_html),  # same builder as try_send_rich_notification (5.2.0)
     }
     if reply_markup is not None:
         kwargs['reply_markup'] = reply_markup
